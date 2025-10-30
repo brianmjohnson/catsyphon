@@ -1,0 +1,10 @@
+[tools]
+python = "3.11"  # Backend requirement
+node = "20"      # Frontend - LTS version
+uv = "latest"    # Python package manager
+pnpm = "latest"  # Frontend package manager
+
+[env]
+# Ensure Python packages are installed in project
+_.python.venv = { path = "backend/.venv", create = true }
+

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: catsyphon-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-catsyphon}
+      POSTGRES_USER: ${POSTGRES_USER:-catsyphon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-catsyphon_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-catsyphon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
