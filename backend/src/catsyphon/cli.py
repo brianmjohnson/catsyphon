@@ -58,9 +58,8 @@ def serve(
     Runs the CatSyphon API server for querying conversation data.
     """
     import uvicorn
-    from catsyphon.api.app import app as fastapi_app
 
-    console.print(f"[bold green]Starting CatSyphon API server...[/bold green]")
+    console.print("[bold green]Starting CatSyphon API server...[/bold green]")
     console.print(f"  Host: {host}")
     console.print(f"  Port: {port}")
     console.print(f"  Reload: {reload}")

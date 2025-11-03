@@ -47,6 +47,8 @@ async def health() -> dict[str, str]:
 
 # TODO: Add route imports when implemented
 # from catsyphon.api.routes import conversations, stats, search
-# app.include_router(conversations.router, prefix="/conversations", tags=["conversations"])
+# app.include_router(
+#     conversations.router, prefix="/conversations", tags=["conversations"]
+# )
 # app.include_router(stats.router, prefix="/stats", tags=["stats"])
 # app.include_router(search.router, prefix="/search", tags=["search"])

@@ -1,0 +1,136 @@
+"""
+Database connection management for CatSyphon.
+
+Provides database session management, connection handling, and transaction support.
+"""
+
+from contextlib import contextmanager
+from typing import Generator
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from catsyphon.config import settings
+
+# Create engine instance (singleton pattern)
+engine = create_engine(
+    settings.database_url,
+    echo=settings.environment == "development",  # SQL logging in dev
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,  # Verify connections before using
+)
+
+# Create session factory
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+
+def get_session() -> Session:
+    """
+    Get a new database session.
+
+    Returns:
+        Session: A new SQLAlchemy session
+
+    Example:
+        >>> session = get_session()
+        >>> try:
+        >>>     # Use session
+        >>>     session.commit()
+        >>> except Exception:
+        >>>     session.rollback()
+        >>> finally:
+        >>>     session.close()
+    """
+    return SessionLocal()
+
+
+@contextmanager
+def get_db() -> Generator[Session, None, None]:
+    """
+    Context manager for database sessions with automatic cleanup.
+
+    Yields:
+        Session: A SQLAlchemy session
+
+    Example:
+        >>> with get_db() as db:
+        >>>     user = db.query(Developer).first()
+        >>>     print(user.username)
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@contextmanager
+def transaction() -> Generator[Session, None, None]:
+    """
+    Context manager for explicit transaction handling.
+
+    Yields:
+        Session: A SQLAlchemy session with transaction support
+
+    Example:
+        >>> with transaction() as db:
+        >>>     project = Project(name="My Project")
+        >>>     db.add(project)
+        >>>     # Commits automatically on success
+        >>>     # Rolls back on exception
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def init_db() -> None:
+    """
+    Initialize the database.
+
+    This function can be used to create tables programmatically,
+    but in production we use Alembic migrations instead.
+
+    Note:
+        Prefer using Alembic migrations: `alembic upgrade head`
+    """
+    from catsyphon.models.db import Base
+
+    Base.metadata.create_all(bind=engine)
+
+
+def check_connection() -> bool:
+    """
+    Check if database connection is working.
+
+    Returns:
+        bool: True if connection successful, False otherwise
+
+    Example:
+        >>> if check_connection():
+        >>>     print("Database is accessible")
+        >>> else:
+        >>>     print("Cannot connect to database")
+    """
+    try:
+        with get_db() as db:
+            db.execute("SELECT 1")
+        return True
+    except Exception as e:
+        print(f"Database connection failed: {e}")
+        return False
