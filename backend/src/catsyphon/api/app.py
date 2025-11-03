@@ -7,6 +7,8 @@ Main API application for querying conversation data and insights.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from catsyphon.api.routes import conversations, metadata, stats
+
 app = FastAPI(
     title="CatSyphon API",
     description="API for analyzing coding agent conversation logs",
@@ -38,17 +40,18 @@ async def root() -> dict[str, str]:
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Health check endpoint."""
-    # TODO: Check database connection
+    from catsyphon.db.connection import check_connection
+
+    db_status = "healthy" if check_connection() else "unhealthy"
+
     return {
-        "status": "healthy",
-        "database": "not_configured",
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "database": db_status,
     }
 
 
-# TODO: Add route imports when implemented
-# from catsyphon.api.routes import conversations, stats, search
-# app.include_router(
-#     conversations.router, prefix="/conversations", tags=["conversations"]
-# )
-# app.include_router(stats.router, prefix="/stats", tags=["stats"])
-# app.include_router(search.router, prefix="/search", tags=["search"])
+app.include_router(
+    conversations.router, prefix="/conversations", tags=["conversations"]
+)
+app.include_router(metadata.router, prefix="", tags=["metadata"])
+app.include_router(stats.router, prefix="/stats", tags=["stats"])

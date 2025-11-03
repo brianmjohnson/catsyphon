@@ -185,3 +185,115 @@ class ConversationRepository(BaseRepository[Conversation]):
             .limit(limit)
             .all()
         )
+
+    def get_by_filters(
+        self,
+        project_id: Optional[uuid.UUID] = None,
+        developer_id: Optional[uuid.UUID] = None,
+        agent_type: Optional[str] = None,
+        status: Optional[str] = None,
+        success: Optional[bool] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        load_relations: bool = False,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Conversation]:
+        """
+        Get conversations by multiple filters.
+
+        Args:
+            project_id: Filter by project
+            developer_id: Filter by developer
+            agent_type: Filter by agent type
+            status: Filter by status
+            success: Filter by success status
+            start_date: Filter by start date (>=)
+            end_date: Filter by end date (<=)
+            load_relations: Whether to load related objects
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of conversations matching filters
+        """
+        query = self.session.query(Conversation)
+
+        # Add filters
+        if project_id:
+            query = query.filter(Conversation.project_id == project_id)
+        if developer_id:
+            query = query.filter(Conversation.developer_id == developer_id)
+        if agent_type:
+            query = query.filter(Conversation.agent_type == agent_type)
+        if status:
+            query = query.filter(Conversation.status == status)
+        if success is not None:
+            query = query.filter(Conversation.success == success)
+        if start_date:
+            query = query.filter(Conversation.start_time >= start_date)
+        if end_date:
+            query = query.filter(Conversation.start_time <= end_date)
+
+        # Load relations if requested
+        if load_relations:
+            query = query.options(
+                joinedload(Conversation.project),
+                joinedload(Conversation.developer),
+                joinedload(Conversation.epochs),
+                joinedload(Conversation.messages),
+                joinedload(Conversation.files_touched),
+                joinedload(Conversation.conversation_tags),
+            )
+
+        # Order, offset, limit
+        query = query.order_by(Conversation.start_time.desc()).offset(offset)
+        if limit:
+            query = query.limit(limit)
+
+        return query.all()
+
+    def count_by_filters(
+        self,
+        project_id: Optional[uuid.UUID] = None,
+        developer_id: Optional[uuid.UUID] = None,
+        agent_type: Optional[str] = None,
+        status: Optional[str] = None,
+        success: Optional[bool] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> int:
+        """
+        Count conversations by multiple filters.
+
+        Args:
+            project_id: Filter by project
+            developer_id: Filter by developer
+            agent_type: Filter by agent type
+            status: Filter by status
+            success: Filter by success status
+            start_date: Filter by start date (>=)
+            end_date: Filter by end date (<=)
+
+        Returns:
+            Count of conversations matching filters
+        """
+        query = self.session.query(Conversation)
+
+        # Add filters (same as get_by_filters)
+        if project_id:
+            query = query.filter(Conversation.project_id == project_id)
+        if developer_id:
+            query = query.filter(Conversation.developer_id == developer_id)
+        if agent_type:
+            query = query.filter(Conversation.agent_type == agent_type)
+        if status:
+            query = query.filter(Conversation.status == status)
+        if success is not None:
+            query = query.filter(Conversation.success == success)
+        if start_date:
+            query = query.filter(Conversation.start_time >= start_date)
+        if end_date:
+            query = query.filter(Conversation.start_time <= end_date)
+
+        return query.count()

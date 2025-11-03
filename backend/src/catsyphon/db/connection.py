@@ -7,7 +7,7 @@ Provides database session management, connection handling, and transaction suppo
 from contextlib import contextmanager
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from catsyphon.config import settings
@@ -49,8 +49,31 @@ def get_session() -> Session:
     return SessionLocal()
 
 
-@contextmanager
 def get_db() -> Generator[Session, None, None]:
+    """
+    Dependency for FastAPI to get database sessions with automatic cleanup.
+
+    Yields:
+        Session: A SQLAlchemy session
+
+    Example (FastAPI):
+        >>> @app.get("/users")
+        >>> def get_users(db: Session = Depends(get_db)):
+        >>>     return db.query(User).all()
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+@contextmanager
+def db_session() -> Generator[Session, None, None]:
     """
     Context manager for database sessions with automatic cleanup.
 
@@ -58,7 +81,7 @@ def get_db() -> Generator[Session, None, None]:
         Session: A SQLAlchemy session
 
     Example:
-        >>> with get_db() as db:
+        >>> with db_session() as db:
         >>>     user = db.query(Developer).first()
         >>>     print(user.username)
     """
@@ -128,8 +151,8 @@ def check_connection() -> bool:
         >>>     print("Cannot connect to database")
     """
     try:
-        with get_db() as db:
-            db.execute("SELECT 1")
+        with db_session() as db:
+            db.execute(text("SELECT 1"))
         return True
     except Exception as e:
         print(f"Database connection failed: {e}")

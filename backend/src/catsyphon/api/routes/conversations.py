@@ -1,0 +1,162 @@
+"""
+Conversation API routes.
+
+Endpoints for querying and retrieving conversation data.
+"""
+
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from catsyphon.api.schemas import (
+    ConversationDetail,
+    ConversationListItem,
+    ConversationListResponse,
+    MessageResponse,
+)
+from catsyphon.db.connection import get_db
+from catsyphon.db.repositories import ConversationRepository, MessageRepository
+from catsyphon.models.db import Conversation
+
+router = APIRouter()
+
+
+def _conversation_to_list_item(conv: Conversation) -> ConversationListItem:
+    """Convert Conversation model to ConversationListItem schema."""
+    # Now that schemas use extra_data, model_validate works directly!
+    item = ConversationListItem.model_validate(conv)
+
+    # Add computed counts
+    item.message_count = len(conv.messages) if conv.messages else 0
+    item.epoch_count = len(conv.epochs) if conv.epochs else 0
+    item.files_count = len(conv.files_touched) if conv.files_touched else 0
+
+    return item
+
+
+def _conversation_to_detail(conv: Conversation) -> ConversationDetail:
+    """Convert Conversation model to ConversationDetail schema."""
+    # Convert to list item first
+    base = _conversation_to_list_item(conv)
+
+    # Add related data
+    return ConversationDetail(
+        **base.model_dump(),
+        messages=[MessageResponse.model_validate(m) for m in (conv.messages or [])],
+        epochs=conv.epochs or [],
+        files_touched=conv.files_touched or [],
+        conversation_tags=conv.conversation_tags or [],
+    )
+
+
+@router.get("", response_model=ConversationListResponse)
+async def list_conversations(
+    project_id: Optional[UUID] = Query(None, description="Filter by project ID"),
+    developer_id: Optional[UUID] = Query(None, description="Filter by developer ID"),
+    agent_type: Optional[str] = Query(None, description="Filter by agent type"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    start_date: Optional[str] = Query(
+        None, description="Filter by start date (ISO format)"
+    ),
+    end_date: Optional[str] = Query(
+        None, description="Filter by end date (ISO format)"
+    ),
+    success: Optional[bool] = Query(None, description="Filter by success status"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    session: Session = Depends(get_db),
+) -> ConversationListResponse:
+    """
+    List conversations with optional filters.
+
+    Returns paginated list of conversations with basic metadata.
+    For full conversation details including messages, use GET /conversations/{id}.
+    """
+    repo = ConversationRepository(session)
+
+    # Build filters
+    filters = {}
+    if project_id:
+        filters["project_id"] = project_id
+    if developer_id:
+        filters["developer_id"] = developer_id
+    if agent_type:
+        filters["agent_type"] = agent_type
+    if status:
+        filters["status"] = status
+    if success is not None:
+        filters["success"] = success
+
+    # Get conversations with relations (for counts and display)
+    conversations = repo.get_by_filters(
+        **filters,
+        load_relations=True,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+    )
+
+    # Get total count for pagination
+    total = repo.count_by_filters(**filters)
+
+    # Convert to response schema
+    items = [_conversation_to_list_item(conv) for conv in conversations]
+
+    return ConversationListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=(total + page_size - 1) // page_size,  # Ceiling division
+    )
+
+
+@router.get("/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(
+    conversation_id: UUID,
+    session: Session = Depends(get_db),
+) -> ConversationDetail:
+    """
+    Get detailed conversation by ID.
+
+    Returns full conversation with all messages, epochs, files touched, and tags.
+    """
+    repo = ConversationRepository(session)
+
+    # Get conversation with all relations loaded
+    conversation = repo.get_with_relations(conversation_id)
+
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return _conversation_to_detail(conversation)
+
+
+@router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
+async def get_conversation_messages(
+    conversation_id: UUID,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum messages to return"),
+    offset: int = Query(0, ge=0, description="Number of messages to skip"),
+    session: Session = Depends(get_db),
+) -> list[MessageResponse]:
+    """
+    Get messages for a specific conversation.
+
+    Supports pagination for large conversations.
+    Messages are returned in chronological order.
+    """
+    # First verify conversation exists
+    conv_repo = ConversationRepository(session)
+    if not conv_repo.get(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Get messages
+    msg_repo = MessageRepository(session)
+    messages = msg_repo.get_by_conversation(
+        conversation_id=conversation_id,
+        limit=limit,
+        offset=offset,
+    )
+
+    return [MessageResponse.model_validate(m) for m in messages]
