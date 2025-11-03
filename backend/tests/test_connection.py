@@ -2,11 +2,17 @@
 Tests for database connection management.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy.orm import Session
 
-from catsyphon.db.connection import check_connection, get_session, init_db
+from catsyphon.db.connection import (
+    check_connection,
+    get_db,
+    get_session,
+    init_db,
+    transaction,
+)
 from catsyphon.models.db import Developer, Project
 
 
@@ -26,79 +32,138 @@ class TestGetSession:
 class TestGetDbContextManager:
     """Tests for get_db context manager."""
 
-    def test_get_db_yields_session(self, db_session: Session):
+    def test_get_db_yields_session(self):
         """Test that get_db yields a session."""
-        # Using the fixture's session to avoid actual DB connection
-        # This tests the pattern, not the actual get_db function
-        # since get_db would try to connect to PostgreSQL
-        assert isinstance(db_session, Session)
+        # Mock SessionLocal to avoid PostgreSQL dependency
+        mock_session = MagicMock(spec=Session)
 
-    def test_session_commit_on_success(self, db_session: Session):
-        """Test that session commits on successful context exit."""
-        project = Project(
-            name="Test Project",
-            description="Created in context manager test",
-        )
-        db_session.add(project)
-        db_session.commit()
-        db_session.refresh(project)
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            with get_db() as session:
+                assert session is mock_session
 
-        # Verify it was committed
-        retrieved = db_session.query(Project).filter_by(name="Test Project").first()
-        assert retrieved is not None
-        assert retrieved.id == project.id
+            # Verify session lifecycle
+            mock_session.commit.assert_called_once()
+            mock_session.close.assert_called_once()
 
-    def test_session_rollback_on_exception(self, db_session: Session):
-        """Test that session rolls back on exception."""
-        initial_count = db_session.query(Project).count()
+    def test_get_db_commits_on_success(self):
+        """Test that get_db commits on successful context exit."""
+        mock_session = MagicMock(spec=Session)
 
-        try:
-            project = Project(name="Will Be Rolled Back")
-            db_session.add(project)
-            # Simulate an error
-            raise ValueError("Simulated error")
-        except ValueError:
-            db_session.rollback()
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            with get_db() as session:
+                # Simulate adding data
+                session.add(MagicMock())
 
-        # Verify rollback
-        final_count = db_session.query(Project).count()
-        assert final_count == initial_count
+            # Should commit on successful exit
+            mock_session.commit.assert_called_once()
+            mock_session.rollback.assert_not_called()
+            mock_session.close.assert_called_once()
+
+    def test_get_db_rollback_on_exception(self):
+        """Test that get_db rolls back on exception."""
+        mock_session = MagicMock(spec=Session)
+
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            try:
+                with get_db():
+                    # Simulate an error
+                    raise ValueError("Test error")
+            except ValueError:
+                pass
+
+            # Should rollback on exception
+            mock_session.rollback.assert_called_once()
+            mock_session.commit.assert_not_called()
+            mock_session.close.assert_called_once()
+
+    def test_get_db_closes_session_always(self):
+        """Test that get_db always closes session even on error."""
+        mock_session = MagicMock(spec=Session)
+
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            # Test with exception
+            try:
+                with get_db():
+                    raise RuntimeError("Error")
+            except RuntimeError:
+                pass
+
+            mock_session.close.assert_called_once()
+
+            # Reset and test without exception
+            mock_session.reset_mock()
+            with get_db():
+                pass
+
+            mock_session.close.assert_called_once()
 
 
 class TestTransactionContextManager:
     """Tests for transaction context manager."""
 
-    def test_transaction_commits(self, db_session: Session):
-        """Test that transaction context manager commits."""
-        # Create a project in a simulated transaction
-        developer = Developer(username="transaction_test_user")
-        db_session.add(developer)
-        db_session.commit()
-        db_session.refresh(developer)
+    def test_transaction_yields_session(self):
+        """Test that transaction yields a session."""
+        mock_session = MagicMock(spec=Session)
 
-        # Verify it exists
-        retrieved = (
-            db_session.query(Developer)
-            .filter_by(username="transaction_test_user")
-            .first()
-        )
-        assert retrieved is not None
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            with transaction() as session:
+                assert session is mock_session
 
-    def test_transaction_rollback_on_error(self, db_session: Session):
+            # Verify session lifecycle
+            mock_session.commit.assert_called_once()
+            mock_session.close.assert_called_once()
+
+    def test_transaction_commits_on_success(self):
+        """Test that transaction commits on successful context exit."""
+        mock_session = MagicMock(spec=Session)
+
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            with transaction() as session:
+                # Simulate transaction work
+                session.add(MagicMock())
+
+            # Should commit on successful exit
+            mock_session.commit.assert_called_once()
+            mock_session.rollback.assert_not_called()
+            mock_session.close.assert_called_once()
+
+    def test_transaction_rollback_on_error(self):
         """Test that transaction rolls back on error."""
-        initial_count = db_session.query(Developer).count()
+        mock_session = MagicMock(spec=Session)
 
-        try:
-            developer = Developer(username="will_rollback")
-            db_session.add(developer)
-            db_session.flush()
-            raise RuntimeError("Forced error")
-        except RuntimeError:
-            db_session.rollback()
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            try:
+                with transaction():
+                    # Simulate an error during transaction
+                    raise RuntimeError("Transaction error")
+            except RuntimeError:
+                pass
 
-        # Verify rollback
-        final_count = db_session.query(Developer).count()
-        assert final_count == initial_count
+            # Should rollback on exception
+            mock_session.rollback.assert_called_once()
+            mock_session.commit.assert_not_called()
+            mock_session.close.assert_called_once()
+
+    def test_transaction_closes_session_always(self):
+        """Test that transaction always closes session."""
+        mock_session = MagicMock(spec=Session)
+
+        with patch("catsyphon.db.connection.SessionLocal", return_value=mock_session):
+            # Test with exception
+            try:
+                with transaction():
+                    raise ValueError("Error")
+            except ValueError:
+                pass
+
+            mock_session.close.assert_called_once()
+
+            # Reset and test without exception
+            mock_session.reset_mock()
+            with transaction():
+                pass
+
+            mock_session.close.assert_called_once()
 
 
 class TestDatabaseOperations:

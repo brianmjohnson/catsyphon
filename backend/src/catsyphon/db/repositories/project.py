@@ -41,3 +41,19 @@ class ProjectRepository(BaseRepository[Project]):
         return (
             self.session.query(Project).filter(Project.name.ilike(name_pattern)).all()
         )
+
+    def get_or_create_by_name(self, name: str, **kwargs) -> Project:
+        """
+        Get existing project or create new one.
+
+        Args:
+            name: Project name
+            **kwargs: Additional project fields (e.g., description)
+
+        Returns:
+            Project instance
+        """
+        project = self.get_by_name(name)
+        if not project:
+            project = self.create(name=name, **kwargs)
+        return project

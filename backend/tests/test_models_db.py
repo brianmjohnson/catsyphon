@@ -20,6 +20,58 @@ from catsyphon.models.db import (
 )
 
 
+class TestModelRepr:
+    """Tests for model __repr__ methods."""
+
+    def test_project_repr(self, sample_project: Project):
+        """Test Project __repr__ method."""
+        repr_str = repr(sample_project)
+        assert "Project" in repr_str
+        assert sample_project.name in repr_str
+
+    def test_developer_repr(self, sample_developer: Developer):
+        """Test Developer __repr__ method."""
+        repr_str = repr(sample_developer)
+        assert "Developer" in repr_str
+        assert sample_developer.username in repr_str
+
+    def test_conversation_repr(self, sample_conversation: Conversation):
+        """Test Conversation __repr__ method."""
+        repr_str = repr(sample_conversation)
+        assert "Conversation" in repr_str
+        assert str(sample_conversation.id) in repr_str
+
+    def test_epoch_repr(self, sample_epoch: Epoch):
+        """Test Epoch __repr__ method."""
+        repr_str = repr(sample_epoch)
+        assert "Epoch" in repr_str
+        assert str(sample_epoch.id) in repr_str
+
+    def test_message_repr(self, sample_message: Message):
+        """Test Message __repr__ method."""
+        repr_str = repr(sample_message)
+        assert "Message" in repr_str
+        assert str(sample_message.id) in repr_str
+
+    def test_file_touched_repr(self, sample_file_touched: FileTouched):
+        """Test FileTouched __repr__ method."""
+        repr_str = repr(sample_file_touched)
+        assert "FileTouched" in repr_str
+        assert str(sample_file_touched.id) in repr_str
+
+    def test_conversation_tag_repr(self, sample_conversation_tag: ConversationTag):
+        """Test ConversationTag __repr__ method."""
+        repr_str = repr(sample_conversation_tag)
+        assert "ConversationTag" in repr_str
+        assert str(sample_conversation_tag.id) in repr_str
+
+    def test_raw_log_repr(self, sample_raw_log: RawLog):
+        """Test RawLog __repr__ method."""
+        repr_str = repr(sample_raw_log)
+        assert "RawLog" in repr_str
+        assert str(sample_raw_log.id) in repr_str
+
+
 class TestProject:
     """Tests for Project model."""
 

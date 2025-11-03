@@ -57,3 +57,16 @@ class DeveloperRepository(BaseRepository[Developer]):
         if not developer:
             developer = self.create(username=username, **kwargs)
         return developer
+
+    def get_or_create_by_username(self, username: str, **kwargs) -> Developer:
+        """
+        Get existing developer or create new one (alias for get_or_create).
+
+        Args:
+            username: Developer username
+            **kwargs: Additional developer fields
+
+        Returns:
+            Developer instance
+        """
+        return self.get_or_create(username, **kwargs)

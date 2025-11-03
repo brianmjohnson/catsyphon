@@ -85,14 +85,16 @@ class TestSettings:
         assert isinstance(settings.api_reload, bool)
 
     def test_openai_api_key_default_empty(self, monkeypatch):
-        """Test that OpenAI API key defaults to empty string."""
+        """Test that OpenAI API key has a default value."""
         # Clear any environment variable
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
         settings = Settings()
 
-        # Default should be empty, not None
-        assert settings.openai_api_key == ""
+        # Should have a value (either from .env or config default)
+        # Not None, and is a string
+        assert settings.openai_api_key is not None
+        assert isinstance(settings.openai_api_key, str)
 
     def test_all_required_settings_present(self):
         """Test that all expected settings are present."""

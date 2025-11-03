@@ -10,9 +10,12 @@ from sqlalchemy.orm import Session
 from catsyphon.db.repositories import (
     ConversationRepository,
     DeveloperRepository,
+    EpochRepository,
+    MessageRepository,
     ProjectRepository,
+    RawLogRepository,
 )
-from catsyphon.models.db import Conversation, Developer, Project
+from catsyphon.models.db import Conversation, Developer, Epoch, Project
 
 
 class TestProjectRepository:
@@ -387,3 +390,525 @@ class TestConversationRepository:
         page1_ids = {c.id for c in page1}
         page2_ids = {c.id for c in page2}
         assert len(page1_ids & page2_ids) == 0  # No overlap
+
+
+class TestEpochRepository:
+    """Tests for EpochRepository."""
+
+    def test_create_epoch(self, db_session: Session, sample_conversation: Conversation):
+        """Test creating an epoch via repository."""
+        repo = EpochRepository(db_session)
+        epoch = repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=0,
+            start_time=datetime.now(UTC),
+            end_time=datetime.now(UTC) + timedelta(minutes=10),
+            intent="feature_add",
+            outcome="success",
+            sentiment="positive",
+            sentiment_score=0.8,
+        )
+
+        assert epoch.id is not None
+        assert epoch.conversation_id == sample_conversation.id
+        assert epoch.sequence == 0
+        assert epoch.intent == "feature_add"
+        assert epoch.duration_seconds == 600  # 10 minutes
+
+    def test_get_by_conversation(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test getting epochs by conversation."""
+        repo = EpochRepository(db_session)
+
+        # Create multiple epochs
+        for i in range(3):
+            repo.create_epoch(
+                conversation_id=sample_conversation.id,
+                sequence=i,
+                start_time=datetime.now(UTC) + timedelta(minutes=i),
+            )
+
+        epochs = repo.get_by_conversation(sample_conversation.id)
+        assert len(epochs) >= 3
+
+    def test_get_by_sequence(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test getting epoch by sequence number."""
+        repo = EpochRepository(db_session)
+
+        # Create epochs with different sequences
+        repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=0,
+            start_time=datetime.now(UTC),
+        )
+        epoch2 = repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=1,
+            start_time=datetime.now(UTC),
+        )
+
+        # Get specific sequence
+        found = repo.get_by_sequence(sample_conversation.id, 1)
+        assert found is not None
+        assert found.id == epoch2.id
+
+    def test_get_next_sequence(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test getting next sequence number."""
+        repo = EpochRepository(db_session)
+
+        # First epoch should be sequence 0
+        next_seq = repo.get_next_sequence(sample_conversation.id)
+        assert next_seq == 0
+
+        # Create an epoch
+        repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=next_seq,
+            start_time=datetime.now(UTC),
+        )
+
+        # Next should be 1
+        next_seq = repo.get_next_sequence(sample_conversation.id)
+        assert next_seq == 1
+
+    def test_create_epoch_calculates_duration(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test that duration is auto-calculated."""
+        repo = EpochRepository(db_session)
+
+        start = datetime.now(UTC)
+        end = start + timedelta(minutes=5, seconds=30)
+
+        epoch = repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=0,
+            start_time=start,
+            end_time=end,
+        )
+
+        assert epoch.duration_seconds == 330  # 5.5 minutes = 330 seconds
+
+    def test_get_by_conversation_ordering(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test that epochs are ordered by sequence."""
+        repo = EpochRepository(db_session)
+
+        # Create epochs in reverse order
+        for i in [2, 0, 1]:
+            repo.create_epoch(
+                conversation_id=sample_conversation.id,
+                sequence=i,
+                start_time=datetime.now(UTC),
+            )
+
+        epochs = repo.get_by_conversation(sample_conversation.id)
+
+        # Should be ordered by sequence ascending
+        sequences = [e.sequence for e in epochs]
+        assert sequences == sorted(sequences)
+
+    def test_create_epoch_with_tags(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test creating epoch with tagging data."""
+        repo = EpochRepository(db_session)
+
+        epoch = repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=0,
+            start_time=datetime.now(UTC),
+            intent="bug_fix",
+            outcome="partial",
+            sentiment="neutral",
+            sentiment_score=0.0,
+        )
+
+        assert epoch.intent == "bug_fix"
+        assert epoch.outcome == "partial"
+        assert epoch.sentiment == "neutral"
+        assert epoch.sentiment_score == 0.0
+
+    def test_epoch_cascade_delete(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test that epochs are deleted when conversation is deleted."""
+        repo = EpochRepository(db_session)
+        conv_repo = ConversationRepository(db_session)
+
+        # Create an epoch
+        epoch = repo.create_epoch(
+            conversation_id=sample_conversation.id,
+            sequence=0,
+            start_time=datetime.now(UTC),
+        )
+        epoch_id = epoch.id
+
+        # Delete conversation
+        conv_repo.delete(sample_conversation.id)
+        db_session.flush()
+
+        # Epoch should be gone
+        deleted_epoch = repo.get(epoch_id)
+        assert deleted_epoch is None
+
+
+class TestMessageRepository:
+    """Tests for MessageRepository."""
+
+    def test_create_message(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test creating a message via repository."""
+        repo = MessageRepository(db_session)
+        message = repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="user",
+            content="Test message",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+        )
+
+        assert message.id is not None
+        assert message.role == "user"
+        assert message.content == "Test message"
+
+    def test_get_by_conversation(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test getting messages by conversation."""
+        repo = MessageRepository(db_session)
+
+        # Create multiple messages
+        for i in range(3):
+            repo.create_message(
+                epoch_id=sample_epoch.id,
+                conversation_id=sample_conversation.id,
+                role="user" if i % 2 == 0 else "assistant",
+                content=f"Message {i}",
+                timestamp=datetime.now(UTC),
+                sequence=i,
+            )
+
+        messages = repo.get_by_conversation(sample_conversation.id)
+        assert len(messages) >= 3
+
+    def test_get_by_epoch(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test getting messages by epoch."""
+        repo = MessageRepository(db_session)
+
+        # Create messages
+        for i in range(2):
+            repo.create_message(
+                epoch_id=sample_epoch.id,
+                conversation_id=sample_conversation.id,
+                role="user",
+                content=f"Message {i}",
+                timestamp=datetime.now(UTC),
+                sequence=i,
+            )
+
+        messages = repo.get_by_epoch(sample_epoch.id)
+        assert len(messages) >= 2
+
+    def test_get_by_role(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test filtering messages by role."""
+        repo = MessageRepository(db_session)
+
+        # Create messages with different roles
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="user",
+            content="User message 1",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+        )
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="assistant",
+            content="Assistant message",
+            timestamp=datetime.now(UTC),
+            sequence=1,
+        )
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="user",
+            content="User message 2",
+            timestamp=datetime.now(UTC),
+            sequence=2,
+        )
+
+        user_messages = repo.get_by_role(sample_conversation.id, "user")
+        assert len(user_messages) >= 2
+        assert all(m.role == "user" for m in user_messages)
+
+    def test_bulk_create(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test bulk creating messages."""
+        repo = MessageRepository(db_session)
+
+        messages_data = [
+            {
+                "epoch_id": sample_epoch.id,
+                "conversation_id": sample_conversation.id,
+                "role": "user",
+                "content": f"Bulk message {i}",
+                "timestamp": datetime.now(UTC),
+                "sequence": i,
+            }
+            for i in range(5)
+        ]
+
+        created = repo.bulk_create(messages_data)
+        assert len(created) == 5
+
+        # Verify they're in the database
+        all_messages = repo.get_by_conversation(sample_conversation.id)
+        assert len(all_messages) >= 5
+
+    def test_message_with_tool_calls(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test storing messages with tool calls."""
+        repo = MessageRepository(db_session)
+
+        tool_calls = [
+            {
+                "tool_name": "Read",
+                "parameters": {"file_path": "test.py"},
+                "result": "file contents",
+                "success": True,
+            }
+        ]
+
+        message = repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="assistant",
+            content="Reading file",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+            tool_calls=tool_calls,
+        )
+
+        assert len(message.tool_calls) == 1
+        assert message.tool_calls[0]["tool_name"] == "Read"
+
+    def test_message_with_code_changes(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test storing messages with code changes."""
+        repo = MessageRepository(db_session)
+
+        code_changes = [
+            {
+                "file_path": "test.py",
+                "change_type": "edit",
+                "old_content": "old",
+                "new_content": "new",
+                "lines_added": 1,
+                "lines_deleted": 1,
+            }
+        ]
+
+        message = repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="assistant",
+            content="Editing file",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+            code_changes=code_changes,
+        )
+
+        assert len(message.code_changes) == 1
+        assert message.code_changes[0]["file_path"] == "test.py"
+
+    def test_message_ordering(
+        self,
+        db_session: Session,
+        sample_epoch: Epoch,
+        sample_conversation: Conversation,
+    ):
+        """Test that messages are ordered by sequence."""
+        repo = MessageRepository(db_session)
+
+        # Create messages in reverse order
+        for i in [2, 0, 1]:
+            repo.create_message(
+                epoch_id=sample_epoch.id,
+                conversation_id=sample_conversation.id,
+                role="user",
+                content=f"Message {i}",
+                timestamp=datetime.now(UTC),
+                sequence=i,
+            )
+
+        messages = repo.get_by_epoch(sample_epoch.id)
+
+        # Should be ordered by sequence ascending
+        sequences = [m.sequence for m in messages]
+        assert sequences == sorted(sequences)
+
+
+class TestRawLogRepository:
+    """Tests for RawLogRepository."""
+
+    def test_create_from_content(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test creating raw log from content string."""
+        repo = RawLogRepository(db_session)
+
+        raw_log = repo.create_from_content(
+            conversation_id=sample_conversation.id,
+            agent_type="claude-code",
+            log_format="jsonl",
+            raw_content='{"test": "content"}',
+            file_path="/path/to/log.jsonl",
+        )
+
+        assert raw_log.id is not None
+        assert raw_log.raw_content == '{"test": "content"}'
+        assert raw_log.file_path == "/path/to/log.jsonl"
+
+    def test_create_from_file(
+        self, db_session: Session, sample_conversation: Conversation, tmp_path
+    ):
+        """Test creating raw log from actual file."""
+        repo = RawLogRepository(db_session)
+
+        # Create a temporary file
+        log_file = tmp_path / "test.jsonl"
+        log_file.write_text('{"session": "test"}')
+
+        raw_log = repo.create_from_file(
+            conversation_id=sample_conversation.id,
+            agent_type="claude-code",
+            log_format="jsonl",
+            file_path=log_file,
+        )
+
+        assert raw_log.id is not None
+        assert '{"session": "test"}' in raw_log.raw_content
+        assert str(log_file) in raw_log.file_path
+
+    def test_get_by_conversation(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test getting raw logs by conversation."""
+        repo = RawLogRepository(db_session)
+
+        # Create multiple raw logs
+        for i in range(2):
+            repo.create_from_content(
+                conversation_id=sample_conversation.id,
+                agent_type="claude-code",
+                log_format="jsonl",
+                raw_content=f'{{"log": {i}}}',
+            )
+
+        raw_logs = repo.get_by_conversation(sample_conversation.id)
+        assert len(raw_logs) >= 2
+
+    def test_get_by_agent_type(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test filtering raw logs by agent type."""
+        repo = RawLogRepository(db_session)
+
+        # Create raw logs with different agent types
+        repo.create_from_content(
+            conversation_id=sample_conversation.id,
+            agent_type="claude-code",
+            log_format="jsonl",
+            raw_content='{"type": "claude"}',
+        )
+        repo.create_from_content(
+            conversation_id=sample_conversation.id,
+            agent_type="copilot",
+            log_format="json",
+            raw_content='{"type": "copilot"}',
+        )
+
+        claude_logs = repo.get_by_agent_type("claude-code")
+        assert len(claude_logs) >= 1
+        assert all(log.agent_type == "claude-code" for log in claude_logs)
+
+    def test_raw_log_stores_full_content(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test that raw log preserves full content."""
+        repo = RawLogRepository(db_session)
+
+        long_content = '{"data": "' + ("x" * 10000) + '"}'
+
+        raw_log = repo.create_from_content(
+            conversation_id=sample_conversation.id,
+            agent_type="claude-code",
+            log_format="jsonl",
+            raw_content=long_content,
+        )
+
+        assert len(raw_log.raw_content) == len(long_content)
+        assert raw_log.raw_content == long_content
+
+    def test_raw_log_cascade_delete(
+        self, db_session: Session, sample_conversation: Conversation
+    ):
+        """Test that raw logs are deleted when conversation is deleted."""
+        repo = RawLogRepository(db_session)
+        conv_repo = ConversationRepository(db_session)
+
+        # Create a raw log
+        raw_log = repo.create_from_content(
+            conversation_id=sample_conversation.id,
+            agent_type="claude-code",
+            log_format="jsonl",
+            raw_content='{"test": "data"}',
+        )
+        raw_log_id = raw_log.id
+
+        # Delete conversation
+        conv_repo.delete(sample_conversation.id)
+        db_session.flush()
+
+        # Raw log should be gone
+        deleted_log = repo.get(raw_log_id)
+        assert deleted_log is None

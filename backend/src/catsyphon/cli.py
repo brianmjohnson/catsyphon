@@ -90,13 +90,31 @@ def ingest(
                 f"{len(conversation.messages)} messages, "
                 f"{sum(len(m.tool_calls) for m in conversation.messages)} tool calls"
             )
-            successful += 1
 
-            # TODO: Store to database (when repository integration is added)
+            # Store to database (unless dry-run)
             if not dry_run:
-                console.print(
-                    "  [yellow]Note: Database storage not yet implemented[/yellow]"
-                )
+                from catsyphon.db.connection import get_db
+                from catsyphon.pipeline.ingestion import ingest_conversation
+
+                try:
+                    with get_db() as session:
+                        db_conversation = ingest_conversation(
+                            session=session,
+                            parsed=conversation,
+                            project_name=project,
+                            developer_username=developer,
+                            file_path=log_file,
+                        )
+                        session.commit()
+                        console.print(
+                            f"  [green]✓ Stored[/green] "
+                            f"conversation={db_conversation.id}"
+                        )
+                except Exception as db_error:
+                    console.print(f"  [red]✗ DB Error:[/red] {str(db_error)}")
+                    raise  # Re-raise to count as failed
+
+            successful += 1
 
         except Exception as e:
             console.print(f"[red]✗[/red] {str(e)}")

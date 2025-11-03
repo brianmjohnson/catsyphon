@@ -3,6 +3,7 @@ Tests for CLI commands.
 """
 
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -161,6 +162,126 @@ class TestIngestCommand:
 
             # Should fail gracefully
             assert "Failed:" in result.stdout
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_ingest_dry_run_no_database(self, db_session):
+        """Test that dry-run mode doesn't persist to database."""
+        from catsyphon.db.repositories import ConversationRepository
+
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(
+                '{"sessionId":"test-123","version":"2.0.17","type":"user",'
+                '"message":{"role":"user","content":"Test"},"uuid":"msg-1",'
+                '"timestamp":"2025-01-01T00:00:00Z"}\n'
+            )
+            temp_path = f.name
+
+        try:
+            # Get initial conversation count
+            repo = ConversationRepository(db_session)
+            initial_count = repo.count()
+
+            # Run in dry-run mode (no database access expected)
+            result = runner.invoke(app, ["ingest", temp_path, "--dry-run"])
+            assert result.exit_code == 0
+
+            # Verify no new conversations were created
+            final_count = repo.count()
+
+            assert final_count == initial_count  # No change
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_ingest_creates_database_records(self, db_session):
+        """Test that ingest creates database records."""
+        from catsyphon.db.repositories import ConversationRepository
+
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(
+                '{"sessionId":"test-db-123","version":"2.0.17","type":"user",'
+                '"message":{"role":"user","content":"DB Test"},"uuid":"msg-1",'
+                '"timestamp":"2025-01-01T00:00:00Z"}\n'
+                '{"sessionId":"test-db-123","version":"2.0.17","type":"assistant",'
+                '"message":{"role":"assistant","content":"Response"},"uuid":"msg-2",'
+                '"timestamp":"2025-01-01T00:00:01Z"}\n'
+            )
+            temp_path = f.name
+
+        try:
+            # Get initial count
+            repo = ConversationRepository(db_session)
+            initial_count = repo.count()
+
+            # Run ingestion (without dry-run) - mock get_db to use test session
+            with patch("catsyphon.db.connection.get_db", mock_get_db):
+                result = runner.invoke(
+                    app,
+                    [
+                        "ingest",
+                        temp_path,
+                        "--project",
+                        "cli-test-project",
+                        "--developer",
+                        "cli-test-user",
+                    ],
+                )
+
+            assert result.exit_code == 0
+            assert "✓ Stored" in result.stdout
+
+            # Verify conversation was created
+            final_count = repo.count()
+
+            # Should have one more conversation
+            assert final_count == initial_count + 1
+
+            # Get the conversation
+            recent = repo.get_recent(limit=1)
+            assert len(recent) == 1
+
+            conversation = recent[0]
+            assert conversation.project.name == "cli-test-project"
+            assert conversation.developer.username == "cli-test-user"
+            assert len(conversation.messages) == 2
+
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_ingest_shows_conversation_id(self, db_session):
+        """Test that successful ingestion shows conversation ID."""
+
+        @contextmanager
+        def mock_get_db():
+            yield db_session
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(
+                '{"sessionId":"test-id-123","version":"2.0.17","type":"user",'
+                '"message":{"role":"user","content":"Test"},"uuid":"msg-1",'
+                '"timestamp":"2025-01-01T00:00:00Z"}\n'
+            )
+            temp_path = f.name
+
+        try:
+            # Mock get_db to use test session
+            with patch("catsyphon.db.connection.get_db", mock_get_db):
+                result = runner.invoke(
+                    app, ["ingest", temp_path, "--project", "id-test"]
+                )
+
+            assert result.exit_code == 0
+            assert "✓ Stored" in result.stdout
+            assert "conversation=" in result.stdout
+
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
