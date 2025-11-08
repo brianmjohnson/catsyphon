@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from catsyphon.db.repositories.base import BaseRepository
 from catsyphon.models.db import Conversation
@@ -348,8 +348,8 @@ class ConversationRepository(BaseRepository[Conversation]):
             .outerjoin(Epoch, Conversation.id == Epoch.conversation_id)
             .outerjoin(FileTouched, Conversation.id == FileTouched.conversation_id)
             .options(
-                joinedload(Conversation.project),
-                joinedload(Conversation.developer)
+                selectinload(Conversation.project),
+                selectinload(Conversation.developer)
             )
             .group_by(Conversation.id)
         )
