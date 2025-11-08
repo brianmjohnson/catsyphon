@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from catsyphon.api.schemas import UploadResponse, UploadResult
-from catsyphon.db.connection import get_db
+from catsyphon.db.connection import db_session
 from catsyphon.parsers import get_default_registry
 from catsyphon.pipeline.ingestion import ingest_conversation
 
@@ -66,7 +66,7 @@ async def upload_conversation_logs(
                 conversation = registry.parse(temp_path)
 
                 # Store to database
-                with get_db() as session:
+                with db_session() as session:
                     db_conversation = ingest_conversation(
                         session=session,
                         parsed=conversation,
