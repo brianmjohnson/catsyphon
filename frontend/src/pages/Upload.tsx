@@ -1,16 +1,25 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload as UploadIcon, FileText, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { uploadConversationLogs } from '@/lib/api';
-import type { UploadResponse } from '@/types/api';
+import { Upload as UploadIcon, CheckCircle, XCircle, Loader2, Clock } from 'lucide-react';
+import { uploadSingleConversationLog } from '@/lib/api';
+import type { UploadResult } from '@/types/api';
+
+interface FileUploadState {
+  file: File;
+  status: 'pending' | 'uploading' | 'success' | 'error';
+  result?: UploadResult;
+  error?: string;
+}
 
 export default function Upload() {
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null);
+  const [fileStates, setFileStates] = useState<FileUploadState[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isUploading = currentFileIndex !== null;
+  const isComplete = fileStates.length > 0 && fileStates.every(f => f.status === 'success' || f.status === 'error');
 
   // Handle drag events
   const handleDrag = (e: React.DragEvent) => {
@@ -63,50 +72,93 @@ export default function Upload() {
       setError(null);
     }
 
-    setSelectedFiles(jsonlFiles);
-    setUploadResult(null);
+    // Initialize file states
+    const newFileStates: FileUploadState[] = jsonlFiles.map((file) => ({
+      file,
+      status: 'pending',
+    }));
+
+    setFileStates(newFileStates);
   };
 
-  // Upload files
+  // Upload files sequentially
   const handleUpload = async () => {
-    if (selectedFiles.length === 0) return;
+    if (fileStates.length === 0) return;
 
-    setIsUploading(true);
     setError(null);
-    setUploadResult(null);
 
-    try {
-      const result = await uploadConversationLogs(selectedFiles);
-      setUploadResult(result);
+    for (let i = 0; i < fileStates.length; i++) {
+      setCurrentFileIndex(i);
 
-      // Redirect to conversation detail if only one file was uploaded successfully
-      if (result.success_count === 1 && result.results.length === 1) {
-        const conversationId = result.results[0].conversation_id;
-        if (conversationId) {
-          // Wait a moment to show success, then redirect
-          setTimeout(() => {
-            navigate(`/conversations/${conversationId}`);
-          }, 1500);
-        }
+      // Update status to uploading
+      setFileStates((prev) =>
+        prev.map((fs, idx) =>
+          idx === i ? { ...fs, status: 'uploading' } : fs
+        )
+      );
+
+      try {
+        const response = await uploadSingleConversationLog(fileStates[i].file);
+
+        // Response contains results array with one item
+        const result = response.results[0];
+
+        // Update with result
+        setFileStates((prev) =>
+          prev.map((fs, idx) =>
+            idx === i
+              ? {
+                  ...fs,
+                  status: result.status as 'success' | 'error',
+                  result: result,
+                  error: result.error,
+                }
+              : fs
+          )
+        );
+      } catch (err) {
+        // Update with error
+        setFileStates((prev) =>
+          prev.map((fs, idx) =>
+            idx === i
+              ? {
+                  ...fs,
+                  status: 'error',
+                  error: err instanceof Error ? err.message : 'Upload failed',
+                }
+              : fs
+          )
+        );
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to upload files');
-    } finally {
-      setIsUploading(false);
+    }
+
+    setCurrentFileIndex(null);
+
+    // Redirect if only one file and it succeeded
+    if (fileStates.length === 1 && fileStates[0].result?.status === 'success') {
+      const conversationId = fileStates[0].result.conversation_id;
+      if (conversationId) {
+        setTimeout(() => {
+          navigate(`/conversations/${conversationId}`);
+        }, 1500);
+      }
     }
   };
 
-  // Remove a selected file
+  // Remove a file
   const removeFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setFileStates((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Reset form
   const reset = () => {
-    setSelectedFiles([]);
-    setUploadResult(null);
+    setFileStates([]);
+    setCurrentFileIndex(null);
     setError(null);
   };
+
+  const successCount = fileStates.filter(f => f.status === 'success').length;
+  const failedCount = fileStates.filter(f => f.status === 'error').length;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -118,7 +170,7 @@ export default function Upload() {
       </div>
 
       {/* Drag & Drop Zone */}
-      {!uploadResult && (
+      {fileStates.length === 0 && (
         <div
           className={`
             border-2 border-dashed rounded-lg p-12 text-center transition-colors
@@ -163,116 +215,106 @@ export default function Upload() {
         </div>
       )}
 
-      {/* Selected Files List */}
-      {selectedFiles.length > 0 && !uploadResult && (
+      {/* Files List with Progress */}
+      {fileStates.length > 0 && (
         <div className="mt-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">
-            Selected Files ({selectedFiles.length})
-          </h2>
+          {/* Progress Header */}
+          {isUploading && currentFileIndex !== null && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm font-medium text-blue-900">
+                Processing file {currentFileIndex + 1} of {fileStates.length}: {fileStates[currentFileIndex].file.name}
+              </p>
+            </div>
+          )}
+
+          {/* Completion Summary */}
+          {isComplete && (
+            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-md">
+              <h2 className="text-lg font-semibold text-green-900 mb-2">
+                Upload Complete
+              </h2>
+              <p className="text-sm text-green-700">
+                Successfully uploaded {successCount} of {fileStates.length} file(s)
+                {failedCount > 0 && ` (${failedCount} failed)`}
+              </p>
+            </div>
+          )}
+
+          {/* File List */}
           <div className="space-y-2">
-            {selectedFiles.map((file, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-md"
-              >
-                <div className="flex items-center space-x-3">
-                  <FileText className="h-5 w-5 text-gray-400" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {(file.size / 1024).toFixed(2)} KB
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeFile(index)}
-                  className="text-red-600 hover:text-red-800 text-sm"
-                  disabled={isUploading}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* Upload Button */}
-          <div className="mt-6 flex space-x-3">
-            <button
-              onClick={handleUpload}
-              disabled={isUploading}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                  Uploading...
-                </>
-              ) : (
-                `Upload ${selectedFiles.length} ${selectedFiles.length === 1 ? 'File' : 'Files'}`
-              )}
-            </button>
-            <button
-              onClick={reset}
-              disabled={isUploading}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Results */}
-      {uploadResult && (
-        <div className="mt-6">
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-md">
-            <h2 className="text-lg font-semibold text-green-900 mb-2">
-              Upload Complete
-            </h2>
-            <p className="text-sm text-green-700">
-              Successfully uploaded {uploadResult.success_count} of{' '}
-              {uploadResult.success_count + uploadResult.failed_count} file(s)
-            </p>
-          </div>
-
-          {/* Results List */}
-          <div className="space-y-2">
-            {uploadResult.results.map((result, index) => (
+            {fileStates.map((fileState, index) => (
               <div
                 key={index}
                 className={`
                   p-4 rounded-md border
                   ${
-                    result.status === 'success'
+                    fileState.status === 'success'
                       ? 'bg-green-50 border-green-200'
-                      : 'bg-red-50 border-red-200'
+                      : fileState.status === 'error'
+                      ? 'bg-red-50 border-red-200'
+                      : fileState.status === 'uploading'
+                      ? 'bg-blue-50 border-blue-200'
+                      : 'bg-gray-50 border-gray-200'
                   }
                 `}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start space-x-3 flex-1">
-                    {result.status === 'success' ? (
+                    {/* Status Icon */}
+                    {fileState.status === 'success' && (
                       <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
-                    ) : (
+                    )}
+                    {fileState.status === 'error' && (
                       <XCircle className="h-5 w-5 text-red-600 mt-0.5" />
                     )}
+                    {fileState.status === 'uploading' && (
+                      <Loader2 className="h-5 w-5 text-blue-600 mt-0.5 animate-spin" />
+                    )}
+                    {fileState.status === 'pending' && (
+                      <Clock className="h-5 w-5 text-gray-400 mt-0.5" />
+                    )}
+
+                    {/* File Info */}
                     <div className="flex-1">
                       <p className="text-sm font-medium text-gray-900">
-                        {result.filename}
+                        {fileState.file.name}
                       </p>
-                      {result.status === 'success' ? (
+                      <p className="text-xs text-gray-500">
+                        {(fileState.file.size / 1024).toFixed(2)} KB
+                      </p>
+
+                      {/* Success Details */}
+                      {fileState.status === 'success' && fileState.result && (
                         <div className="mt-1 text-xs text-gray-600">
-                          {result.message_count} messages, {result.epoch_count} epoch(s)
-                          {result.files_count > 0 && `, ${result.files_count} files touched`}
+                          {fileState.result.message_count} messages, {fileState.result.epoch_count} epoch(s)
+                          {fileState.result.files_count > 0 && `, ${fileState.result.files_count} files touched`}
                         </div>
-                      ) : (
-                        <p className="mt-1 text-xs text-red-700">{result.error}</p>
+                      )}
+
+                      {/* Error Details */}
+                      {fileState.status === 'error' && (
+                        <p className="mt-1 text-xs text-red-700">{fileState.error}</p>
+                      )}
+
+                      {/* Uploading Status */}
+                      {fileState.status === 'uploading' && (
+                        <p className="mt-1 text-xs text-blue-700">Uploading and processing...</p>
                       )}
                     </div>
                   </div>
-                  {result.status === 'success' && result.conversation_id && (
+
+                  {/* Action Buttons */}
+                  {fileState.status === 'pending' && !isUploading && (
                     <button
-                      onClick={() => navigate(`/conversations/${result.conversation_id}`)}
+                      onClick={() => removeFile(index)}
+                      className="text-red-600 hover:text-red-800 text-sm"
+                    >
+                      Remove
+                    </button>
+                  )}
+                  {fileState.status === 'success' && fileState.result?.conversation_id && (
+                    <button
+                      onClick={() => navigate(`/conversations/${fileState.result!.conversation_id}`)}
                       className="ml-4 text-sm text-blue-600 hover:text-blue-800 whitespace-nowrap"
                     >
                       View →
@@ -283,20 +325,40 @@ export default function Upload() {
             ))}
           </div>
 
-          {/* Actions */}
+          {/* Action Buttons */}
           <div className="mt-6 flex space-x-3">
-            <button
-              onClick={reset}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-            >
-              Upload More Files
-            </button>
-            <button
-              onClick={() => navigate('/conversations')}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
-            >
-              View All Conversations
-            </button>
+            {!isUploading && !isComplete && (
+              <>
+                <button
+                  onClick={handleUpload}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  Upload {fileStates.length} {fileStates.length === 1 ? 'File' : 'Files'}
+                </button>
+                <button
+                  onClick={reset}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+                >
+                  Clear
+                </button>
+              </>
+            )}
+            {isComplete && (
+              <>
+                <button
+                  onClick={reset}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  Upload More Files
+                </button>
+                <button
+                  onClick={() => navigate('/conversations')}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+                >
+                  View All Conversations
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

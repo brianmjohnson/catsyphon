@@ -166,3 +166,34 @@ export async function uploadConversationLogs(
     throw new Error(`Network error: ${error}`);
   }
 }
+
+export async function uploadSingleConversationLog(
+  file: File
+): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append('files', file);
+
+  const url = '/api/upload/';
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        response.statusText,
+        await response.text()
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new Error(`Network error: ${error}`);
+  }
+}
