@@ -4,12 +4,33 @@ CatSyphon FastAPI Application.
 Main API application for querying conversation data and insights.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from catsyphon.api.routes import conversations, metadata, stats
+from catsyphon.startup import run_all_startup_checks
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI application.
+
+    Runs startup checks before the application starts serving requests.
+    Ensures critical dependencies (database, migrations) are available.
+    """
+    # Startup: Run all dependency checks
+    run_all_startup_checks()
+
+    yield
+
+    # Shutdown: Cleanup if needed (currently none)
+
 
 app = FastAPI(
+    lifespan=lifespan,
     title="CatSyphon API",
     description="API for analyzing coding agent conversation logs",
     version="0.1.0",
