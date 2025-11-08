@@ -1,35 +1,37 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+/**
+ * Root application component with routing.
+ */
 
-function App() {
-  const [count, setCount] = useState(0)
+import { Link, Outlet } from 'react-router-dom';
 
+export default function App() {
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <div className="min-h-screen bg-background">
+      {/* Navigation */}
+      <nav className="border-b border-border bg-card">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-8">
+              <Link to="/" className="text-xl font-bold hover:text-primary">
+                CatSyphon
+              </Link>
+              <div className="flex gap-4">
+                <Link
+                  to="/conversations"
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Conversations
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
 
-export default App
+      {/* Page content */}
+      <main>
+        <Outlet />
+      </main>
+    </div>
+  );
+}
