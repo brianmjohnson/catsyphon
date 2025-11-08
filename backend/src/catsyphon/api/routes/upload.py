@@ -76,14 +76,13 @@ async def upload_conversation_logs(
                     )
                     session.commit()
 
-                    # Count related records
-                    message_count = len(conversation.messages)
-                    epoch_count = len(conversation.epochs) if conversation.epochs else 1
-                    files_count = (
-                        len(conversation.files_touched)
-                        if conversation.files_touched
-                        else 0
-                    )
+                    # Refresh to load relationships from database
+                    session.refresh(db_conversation)
+
+                    # Count related records from database object
+                    message_count = len(conversation.messages)  # Use parsed count
+                    epoch_count = len(db_conversation.epochs)
+                    files_count = len(db_conversation.files_touched)
 
                     results.append(
                         UploadResult(
