@@ -8,10 +8,12 @@ CatSyphon parses, analyzes, and extracts insights from coding agent conversation
 
 ### Phase 1: Data Foundation (Current)
 - 📝 **Multi-agent log parsing** - Parse logs from Claude Code (with extensible plugin architecture)
+- 👀 **Live directory watching** - Automatic ingestion of new conversation logs with file deduplication
 - 🤖 **AI-powered tagging** - Enrich conversations with sentiment, intent, and outcome analysis
 - 🗄️ **PostgreSQL storage** - Structured storage with rich metadata
 - 🔍 **Query API** - REST API for accessing conversation data
 - 💻 **CLI tool** - Command-line interface for ingestion and management
+- 🖥️ **Web UI** - View and explore conversations with real-time freshness indicators
 
 ### Phase 2: Analytics Dashboards (Planned)
 - 📊 Overview dashboard - Executive metrics and trends
@@ -101,6 +103,12 @@ uv run catsyphon serve
 
 # Ingest conversation logs
 uv run catsyphon ingest path/to/logs --project "my-project"
+
+# Watch directory for live ingestion
+uv run catsyphon watch path/to/logs --project "my-project"
+
+# Watch with verbose logging (includes SQL queries)
+uv run catsyphon watch path/to/logs --verbose
 
 # Check database status
 uv run catsyphon db-status
