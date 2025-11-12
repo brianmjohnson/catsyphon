@@ -218,6 +218,7 @@ def watch(
             retry_interval=retry,
             max_retries=max_retry,
             debounce_seconds=debounce,
+            verbose=verbose,
         )
     except KeyboardInterrupt:
         console.print("\n[yellow]Watch daemon stopped by user[/yellow]")

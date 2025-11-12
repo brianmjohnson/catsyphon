@@ -415,6 +415,7 @@ def start_watching(
     retry_interval: int = 300,
     max_retries: int = 3,
     debounce_seconds: float = 1.0,
+    verbose: bool = False,
 ) -> None:
     """
     Start watching a directory for new conversation logs.
@@ -427,6 +428,7 @@ def start_watching(
         retry_interval: Retry failed files every N seconds
         max_retries: Maximum number of retry attempts
         debounce_seconds: Wait time after file event before processing
+        verbose: Enable verbose logging (includes SQL queries)
     """
     # Validate directory
     if not directory.exists():
@@ -436,14 +438,19 @@ def start_watching(
         raise ValueError(f"Path is not a directory: {directory}")
 
     # Setup logging
+    log_level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="[%(asctime)s] %(levelname)s: %(message)s",
         handlers=[
             logging.StreamHandler(),
             logging.FileHandler(settings.watch_log_file),
         ],
     )
+
+    # Suppress SQLAlchemy query logs unless in verbose mode
+    if not verbose:
+        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
     # Create and start daemon
     daemon = WatcherDaemon(
