@@ -253,6 +253,9 @@ export default function ConversationList() {
                     Start Time
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
+                    Last Activity
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
                     Project
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
@@ -275,7 +278,7 @@ export default function ConversationList() {
               <tbody>
                 {data.items.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                       No conversations found
                     </td>
                   </tr>
@@ -288,6 +291,9 @@ export default function ConversationList() {
                     >
                       <td className="px-4 py-3 text-sm">
                         {format(new Date(conversation.start_time), 'PPp')}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {format(new Date(conversation.updated_at), 'PPp')}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {conversation.project?.name || '-'}

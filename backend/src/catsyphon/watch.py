@@ -242,13 +242,8 @@ class FileWatcher(FileSystemEventHandler):
 
                 # Parse and ingest the file
                 try:
-                    # Detect parser
-                    parser = self.parser_registry.get_parser_for_file(file_path)
-                    if not parser:
-                        raise ValueError(f"No parser found for {file_path.name}")
-
-                    # Parse conversation
-                    parsed = parser.parse(file_path)
+                    # Parse conversation (auto-detects format)
+                    parsed = self.parser_registry.parse(file_path)
 
                     # Ingest into database
                     conversation_id = ingest_conversation(
@@ -257,7 +252,6 @@ class FileWatcher(FileSystemEventHandler):
                         project_name=self.project_name,
                         developer_username=self.developer_username,
                         file_path=file_path,
-                        tags=parsed.tags,
                         skip_duplicates=True,
                     )
 
