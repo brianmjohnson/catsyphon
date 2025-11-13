@@ -11,6 +11,7 @@ export default function Dashboard() {
   const { data: stats, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['stats', 'overview'],
     queryFn: () => getOverviewStats(),
+    refetchInterval: 15000, // Auto-refresh every 15 seconds for live dashboard
   });
 
   if (isLoading) {

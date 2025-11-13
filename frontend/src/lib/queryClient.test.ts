@@ -14,18 +14,18 @@ describe('queryClient', () => {
     expect(defaultOptions.queries?.refetchOnWindowFocus).toBe(false);
   });
 
-  it('should have correct staleTime for live data', () => {
+  it('should have correct staleTime for caching', () => {
     const defaultOptions = queryClient.getDefaultOptions();
 
-    // Should be 10 seconds for live polling
-    expect(defaultOptions.queries?.staleTime).toBe(1000 * 10);
+    // Should be 5 minutes for better UX with cached data
+    expect(defaultOptions.queries?.staleTime).toBe(1000 * 60 * 5);
   });
 
-  it('should have 15 second refetch interval configured', () => {
+  it('should not have global refetch interval', () => {
     const defaultOptions = queryClient.getDefaultOptions();
 
-    // 15 seconds auto-refresh
-    expect(defaultOptions.queries?.refetchInterval).toBe(15000);
+    // No global auto-refresh - added per-query (e.g., Dashboard)
+    expect(defaultOptions.queries?.refetchInterval).toBeUndefined();
   });
 
   it('should pause polling when tab is inactive', () => {

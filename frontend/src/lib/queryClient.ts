@@ -9,8 +9,8 @@ export const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
-      staleTime: 1000 * 10, // 10 seconds (short for live data)
-      refetchInterval: 15000, // Auto-refresh every 15 seconds
+      staleTime: 1000 * 60 * 5, // 5 minutes - show cached data for better UX
+      // No global refetchInterval - add per-query for live data needs (e.g., Dashboard)
       refetchIntervalInBackground: false, // Pause when tab inactive
     },
   },

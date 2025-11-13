@@ -39,6 +39,8 @@ export default function ConversationList() {
   const { data, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['conversations', filters],
     queryFn: () => getConversations(filters),
+    placeholderData: (previousData) => previousData, // Show cached data while refetching
+    refetchOnMount: false, // Don't refetch when navigating back to this page
   });
 
   // Detect new items when data changes
