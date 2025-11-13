@@ -314,11 +314,10 @@ class ConversationRepository(BaseRepository[Conversation]):
         offset: int = 0,
     ) -> List[Tuple[Conversation, int, int, int]]:
         """
-        Get conversations with counts computed in SQL.
+        Get conversations with denormalized counts.
 
         Returns list of (conversation, message_count, epoch_count,
-        files_count) tuples. This is much more efficient than loading all
-        messages/epochs/files just to count them.
+        files_count) tuples using denormalized count columns for performance.
 
         Args:
             project_id: Filter by project
@@ -336,26 +335,17 @@ class ConversationRepository(BaseRepository[Conversation]):
         Returns:
             List of (Conversation, message_count, epoch_count, files_count) tuples
         """
-        from catsyphon.models.db import Epoch, FileTouched, Message
-
+        # Use denormalized count columns - no expensive joins needed!
         query = (
             self.session.query(
                 Conversation,
-                func.coalesce(func.count(Message.id.distinct()), 0).label(
-                    "message_count"
-                ),
-                func.coalesce(func.count(Epoch.id.distinct()), 0).label("epoch_count"),
-                func.coalesce(func.count(FileTouched.id.distinct()), 0).label(
-                    "files_count"
-                ),
+                Conversation.message_count,
+                Conversation.epoch_count,
+                Conversation.files_count,
             )
-            .outerjoin(Message, Conversation.id == Message.conversation_id)
-            .outerjoin(Epoch, Conversation.id == Epoch.conversation_id)
-            .outerjoin(FileTouched, Conversation.id == FileTouched.conversation_id)
             .options(
                 selectinload(Conversation.project), selectinload(Conversation.developer)
             )
-            .group_by(Conversation.id)
         )
 
         # Apply filters (same as get_by_filters)

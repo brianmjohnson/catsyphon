@@ -116,6 +116,17 @@ class Conversation(Base):
         Integer, nullable=False, server_default="1"
     )
 
+    # Denormalized counts for performance (avoid Cartesian product joins)
+    message_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    epoch_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    files_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+
     # Metadata (flexible storage for additional fields)
     tags: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     extra_data: Mapped[dict] = mapped_column(

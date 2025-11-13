@@ -243,7 +243,17 @@ def ingest_conversation(
         )
         logger.debug(f"Stored raw log: {raw_log.id}")
 
-    # Flush to ensure all IDs are generated
+    # Step 9: Update denormalized counts for performance
+    total_files = len(parsed.files_touched) + len(parsed.code_changes)
+    conversation.message_count = len(messages)
+    conversation.epoch_count = 1  # Currently 1 epoch per conversation
+    conversation.files_count = total_files
+    logger.debug(
+        f"Updated counts: messages={conversation.message_count}, "
+        f"epochs={conversation.epoch_count}, files={conversation.files_count}"
+    )
+
+    # Flush to ensure all IDs are generated and counts are saved
     session.flush()
 
     # Refresh conversation to load relationships
