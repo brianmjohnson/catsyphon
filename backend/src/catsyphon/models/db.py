@@ -424,6 +424,23 @@ class RawLog(Base):
         String(64), nullable=False, unique=True
     )  # SHA-256 hash for deduplication
 
+    # Incremental parsing state (Phase 2)
+    last_processed_offset: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )  # Byte offset in file where we last stopped parsing
+    last_processed_line: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )  # Line number for debugging/human readability
+    file_size_bytes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )  # File size at last parse (detect truncation)
+    partial_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )  # Hash of content up to last_processed_offset (detect mid-file changes)
+    last_message_timestamp: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # Timestamp of last processed message (validation)
+
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

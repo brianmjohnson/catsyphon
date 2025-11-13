@@ -291,41 +291,48 @@ class TestIngestionDeduplication:
         sample_parsed_conversation: ParsedConversation,
         tmp_path: Path,
     ):
-        """Test that files with different content create separate conversations."""
+        """Test that files with different content but DIFFERENT session_ids create separate conversations."""
         # Create two files with different content
         file1 = tmp_path / "file1.jsonl"
         file2 = tmp_path / "file2.jsonl"
         file1.write_text('{"test": "content1"}')
         file2.write_text('{"test": "content2"}')
 
+        # Create a second parsed conversation with different session_id
+        import copy
+
+        parsed1 = sample_parsed_conversation
+        parsed2 = copy.deepcopy(sample_parsed_conversation)
+        parsed2.session_id = "different-session-id"
+
         # First ingestion
         conv1 = ingest_conversation(
             session=db_session,
-            parsed=sample_parsed_conversation,
+            parsed=parsed1,
             project_name="test-project",
             file_path=file1,
             skip_duplicates=True,
         )
         db_session.commit()
 
-        # Second ingestion with different content
+        # Second ingestion with different content and different session_id
         conv2 = ingest_conversation(
             session=db_session,
-            parsed=sample_parsed_conversation,
+            parsed=parsed2,
             project_name="test-project",
             file_path=file2,
             skip_duplicates=True,
         )
         db_session.commit()
 
-        # Should create a new conversation
+        # Should create a new conversation (different session_ids)
         assert conv2.id != conv1.id
 
-    def test_no_file_path_skips_duplicate_check(
+    def test_no_file_path_skips_file_hash_check(
         self, db_session: Session, sample_parsed_conversation: ParsedConversation
     ):
-        """Test that ingestion without file_path skips duplicate checking."""
-        # Ingest multiple times without file_path
+        """Test that ingestion without file_path skips file hash checking but still does session_id deduplication."""
+        # Ingest multiple times without file_path but same session_id
         conv1 = ingest_conversation(
             session=db_session,
             parsed=sample_parsed_conversation,
@@ -344,8 +351,8 @@ class TestIngestionDeduplication:
         )
         db_session.commit()
 
-        # Should create separate conversations (no deduplication)
-        assert conv2.id != conv1.id
+        # Should return same conversation (session_id deduplication still applies)
+        assert conv2.id == conv1.id
 
     def test_duplicate_check_happens_before_processing(
         self,

@@ -447,6 +447,12 @@ class TestConversationRepository:
             db_session.add(file_touched)
         db_session.commit()
 
+        # Update denormalized counts (normally done by ingestion pipeline)
+        conv.message_count = 5
+        conv.epoch_count = 3
+        conv.files_count = 2
+        db_session.commit()
+
         # Use get_with_counts
         results = conv_repo.get_with_counts(project_id=sample_project.id)
 

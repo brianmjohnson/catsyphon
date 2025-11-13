@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from catsyphon.db.repositories.base import BaseRepository
@@ -38,6 +37,22 @@ class ConversationRepository(BaseRepository[Conversation]):
                 joinedload(Conversation.messages),
             )
             .filter(Conversation.id == id)
+            .first()
+        )
+
+    def get_by_session_id(self, session_id: str) -> Optional[Conversation]:
+        """
+        Get conversation by session_id from extra_data (metadata) JSONB field.
+
+        Args:
+            session_id: Session ID to search for
+
+        Returns:
+            Conversation with matching session_id or None
+        """
+        return (
+            self.session.query(Conversation)
+            .filter(Conversation.extra_data["session_id"].as_string() == session_id)
             .first()
         )
 
@@ -336,16 +351,13 @@ class ConversationRepository(BaseRepository[Conversation]):
             List of (Conversation, message_count, epoch_count, files_count) tuples
         """
         # Use denormalized count columns - no expensive joins needed!
-        query = (
-            self.session.query(
-                Conversation,
-                Conversation.message_count,
-                Conversation.epoch_count,
-                Conversation.files_count,
-            )
-            .options(
-                selectinload(Conversation.project), selectinload(Conversation.developer)
-            )
+        query = self.session.query(
+            Conversation,
+            Conversation.message_count,
+            Conversation.epoch_count,
+            Conversation.files_count,
+        ).options(
+            selectinload(Conversation.project), selectinload(Conversation.developer)
         )
 
         # Apply filters (same as get_by_filters)

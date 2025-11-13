@@ -21,8 +21,9 @@ from catsyphon.db.repositories import (
     RawLogRepository,
 )
 from catsyphon.exceptions import DuplicateFileError
-from catsyphon.models.db import Conversation, FileTouched
+from catsyphon.models.db import Conversation, Epoch, FileTouched, Message, RawLog
 from catsyphon.models.parsed import ParsedConversation
+from catsyphon.parsers.incremental import IncrementalParseResult
 from catsyphon.utils.hashing import calculate_file_hash
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def ingest_conversation(
     file_path: Optional[Path] = None,
     tags: Optional[dict] = None,
     skip_duplicates: bool = True,
+    update_mode: str = "skip",
 ) -> Conversation:
     """
     Ingest a parsed conversation into the database.
@@ -47,10 +49,15 @@ def ingest_conversation(
         developer_username: Developer username (optional)
         file_path: Path to original log file (optional)
         tags: Pre-computed tags from tagging engine (optional)
-        skip_duplicates: If True, skip files that have already been processed (default: True)
+        skip_duplicates: If True, skip files already processed
+            (default: True)
+        update_mode: How to handle existing conversations by session_id:
+            - "skip": Return existing without changes (default)
+            - "replace": Delete children and recreate with new data (full reparse)
+            - "append": Reserved for future incremental updates
 
     Returns:
-        Created Conversation instance with all relationships loaded
+        Created or updated Conversation instance with all relationships loaded
 
     Raises:
         DuplicateFileError: If file is a duplicate and skip_duplicates=False
@@ -96,6 +103,110 @@ def ingest_conversation(
                 raise DuplicateFileError(file_hash, str(file_path))
 
     # Initialize repositories
+    conversation_repo = ConversationRepository(session)
+
+    # Track whether this is an update or new conversation
+    is_update = False
+    conversation = None
+
+    # Check for existing conversation by session_id (if provided)
+    if parsed.session_id:
+        existing_conversation = conversation_repo.get_by_session_id(parsed.session_id)
+
+        if existing_conversation:
+            if update_mode == "skip":
+                logger.info(
+                    f"Skipping existing conversation: session_id={parsed.session_id}, "
+                    f"conversation_id={existing_conversation.id}"
+                )
+                session.refresh(existing_conversation)
+                return existing_conversation
+
+            elif update_mode == "replace":
+                logger.info(
+                    f"Replacing existing conversation: session_id={parsed.session_id}, "
+                    f"conversation_id={existing_conversation.id}"
+                )
+                # Delete children (CASCADE will handle epochs, messages, files_touched)
+                # and raw_logs if they exist
+
+                # Delete children explicitly to ensure CASCADE works
+                session.query(Message).filter(
+                    Message.conversation_id == existing_conversation.id
+                ).delete()
+                session.query(Epoch).filter(
+                    Epoch.conversation_id == existing_conversation.id
+                ).delete()
+                session.query(FileTouched).filter(
+                    FileTouched.conversation_id == existing_conversation.id
+                ).delete()
+                session.query(RawLog).filter(
+                    RawLog.conversation_id == existing_conversation.id
+                ).delete()
+
+                session.flush()
+
+                # Update conversation fields with new data
+                existing_conversation.project_id = None  # Will be set below
+                existing_conversation.developer_id = None  # Will be set below
+                existing_conversation.agent_type = parsed.agent_type
+                existing_conversation.agent_version = parsed.agent_version
+                existing_conversation.start_time = parsed.start_time
+                existing_conversation.end_time = parsed.end_time
+                existing_conversation.status = (
+                    "completed" if parsed.end_time else "open"
+                )
+                existing_conversation.iteration_count = 1
+                existing_conversation.tags = tags or {}
+                existing_conversation.extra_data = {
+                    "session_id": parsed.session_id,
+                    "git_branch": parsed.git_branch,
+                    "working_directory": parsed.working_directory,
+                    **parsed.metadata,
+                }
+
+                # Use existing conversation for the rest of the ingestion
+                conversation = existing_conversation
+                logger.debug(f"Updated conversation: {conversation.id}")
+
+                # Continue with ingestion flow but skip conversation creation
+                # Jump to project/developer handling
+                is_update = True
+
+            elif update_mode == "append":
+                # Incremental update: append only NEW messages (Phase 2)
+                logger.info(
+                    f"Appending to existing conversation: "
+                    f"session_id={parsed.session_id}, "
+                    f"conversation_id={existing_conversation.id}"
+                )
+
+                # Get existing raw_log for state tracking (if file_path provided)
+                if not file_path:
+                    raise ValueError(
+                        "append mode requires file_path to track incremental state"
+                    )
+
+                # Get raw_log by file path
+                existing_raw_log = raw_log_repo.get_by_file_path(str(file_path))
+                if not existing_raw_log:
+                    logger.warning(
+                        f"No existing raw_log found for {file_path}, "
+                        "falling back to full ingest"
+                    )
+                    # Fall through to regular ingestion (will create raw_log)
+                    is_update = False
+                else:
+                    # Perform incremental append
+                    return _append_messages_incremental(
+                        session=session,
+                        existing_conversation=existing_conversation,
+                        existing_raw_log=existing_raw_log,
+                        parsed=parsed,
+                        tags=tags,
+                    )
+
+    # Initialize remaining repositories
     project_repo = ProjectRepository(session)
     developer_repo = DeveloperRepository(session)
     conversation_repo = ConversationRepository(session)
@@ -117,25 +228,32 @@ def ingest_conversation(
         developer_id = developer.id
         logger.debug(f"Developer: {developer.username} ({developer.id})")
 
-    # Step 3: Create Conversation
-    conversation = conversation_repo.create(
-        project_id=project_id,
-        developer_id=developer_id,
-        agent_type=parsed.agent_type,
-        agent_version=parsed.agent_version,
-        start_time=parsed.start_time,
-        end_time=parsed.end_time,
-        status="completed" if parsed.end_time else "open",
-        iteration_count=1,  # TODO: Detect iterations from parsed data
-        tags=tags or {},
-        extra_data={
-            "session_id": parsed.session_id,
-            "git_branch": parsed.git_branch,
-            "working_directory": parsed.working_directory,
-            **parsed.metadata,
-        },
-    )
-    logger.info(f"Created conversation: {conversation.id}")
+    # Step 3: Create or Update Conversation
+    if not is_update:
+        # Create new conversation
+        conversation = conversation_repo.create(
+            project_id=project_id,
+            developer_id=developer_id,
+            agent_type=parsed.agent_type,
+            agent_version=parsed.agent_version,
+            start_time=parsed.start_time,
+            end_time=parsed.end_time,
+            status="completed" if parsed.end_time else "open",
+            iteration_count=1,  # TODO: Detect iterations from parsed data
+            tags=tags or {},
+            extra_data={
+                "session_id": parsed.session_id,
+                "git_branch": parsed.git_branch,
+                "working_directory": parsed.working_directory,
+                **parsed.metadata,
+            },
+        )
+        logger.info(f"Created conversation: {conversation.id}")
+    else:
+        # Update existing conversation with project/developer associations
+        conversation.project_id = project_id
+        conversation.developer_id = developer_id
+        logger.info(f"Updated conversation associations: {conversation.id}")
 
     # Step 4: Create Epoch (one epoch per conversation for now)
     # TODO: Implement multi-epoch detection based on conversation restarts
@@ -263,6 +381,418 @@ def ingest_conversation(
     logger.info(
         f"Ingestion complete: conversation={conversation.id}, "
         f"messages={len(messages)}, files={total_files}"
+    )
+
+    return conversation
+
+
+def _append_messages_incremental(
+    session: Session,
+    existing_conversation: Conversation,
+    existing_raw_log: RawLog,
+    parsed: ParsedConversation,
+    tags: Optional[dict] = None,
+) -> Conversation:
+    """
+    Append only NEW messages to existing conversation (incremental update).
+
+    This function is called during append mode to incrementally update
+    a conversation with new messages, avoiding full reparse.
+
+    Args:
+        session: Database session
+        existing_conversation: Existing conversation to update
+        existing_raw_log: Existing raw_log with state tracking
+        parsed: Parsed conversation with ALL messages (existing + new)
+        tags: Optional tags for epoch metadata
+
+    Returns:
+        Updated conversation instance
+
+    Note:
+        The 'parsed' object contains ALL messages, but we only create
+        database records for messages beyond the existing count.
+    """
+    logger.info(
+        f"Incremental append: conversation={existing_conversation.id}, "
+        f"existing_messages={existing_conversation.message_count}"
+    )
+
+    # Get existing message count to determine sequence offset
+    existing_message_count = existing_conversation.message_count
+    existing_epoch_count = existing_conversation.epoch_count
+
+    # Filter to only NEW messages (beyond existing count)
+    new_messages = parsed.messages[existing_message_count:]
+
+    if not new_messages:
+        logger.info("No new messages to append, conversation already up-to-date")
+        session.refresh(existing_conversation)
+        return existing_conversation
+
+    logger.info(f"Appending {len(new_messages)} new messages")
+
+    # Get existing epoch (or create if none exists)
+    epoch_repo = EpochRepository(session)
+    message_repo = MessageRepository(session)
+
+    if existing_epoch_count > 0:
+        # Get the most recent epoch
+        existing_epochs = (
+            session.query(Epoch)
+            .filter(Epoch.conversation_id == existing_conversation.id)
+            .order_by(Epoch.sequence.desc())
+            .all()
+        )
+        if existing_epochs:
+            epoch = existing_epochs[0]
+            # Update epoch end time
+            if parsed.end_time:
+                epoch.end_time = parsed.end_time
+        else:
+            # No epochs found, create one
+            epoch = epoch_repo.create_epoch(
+                conversation_id=existing_conversation.id,
+                sequence=0,
+                start_time=parsed.start_time,
+                end_time=parsed.end_time,
+                intent=tags.get("intent") if tags else None,
+                outcome=tags.get("outcome") if tags else None,
+                sentiment=tags.get("sentiment") if tags else None,
+                sentiment_score=tags.get("sentiment_score") if tags else None,
+            )
+    else:
+        # Create first epoch
+        epoch = epoch_repo.create_epoch(
+            conversation_id=existing_conversation.id,
+            sequence=0,
+            start_time=parsed.start_time,
+            end_time=parsed.end_time,
+            intent=tags.get("intent") if tags else None,
+            outcome=tags.get("outcome") if tags else None,
+            sentiment=tags.get("sentiment") if tags else None,
+            sentiment_score=tags.get("sentiment_score") if tags else None,
+        )
+
+    # Create Message records for NEW messages only
+    message_data = []
+    for idx, msg in enumerate(new_messages):
+        # Calculate global sequence (existing + new index)
+        sequence = existing_message_count + idx
+
+        # Serialize tool calls and code changes to JSON
+        tool_calls_json = [
+            {
+                "tool_name": tc.tool_name,
+                "parameters": tc.parameters,
+                "result": tc.result,
+                "success": tc.success,
+                "timestamp": tc.timestamp.isoformat() if tc.timestamp else None,
+            }
+            for tc in msg.tool_calls
+        ]
+
+        code_changes_json = [
+            {
+                "file_path": cc.file_path,
+                "change_type": cc.change_type,
+                "old_content": cc.old_content,
+                "new_content": cc.new_content,
+                "lines_added": cc.lines_added,
+                "lines_deleted": cc.lines_deleted,
+            }
+            for cc in msg.code_changes
+        ]
+
+        # Add model and token_usage to extra_data
+        extra_data = {}
+        if msg.model:
+            extra_data["model"] = msg.model
+        if msg.token_usage:
+            extra_data["token_usage"] = msg.token_usage
+
+        message_data.append(
+            {
+                "epoch_id": epoch.id,
+                "conversation_id": existing_conversation.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp,
+                "sequence": sequence,
+                "tool_calls": tool_calls_json,
+                "code_changes": code_changes_json,
+                "entities": msg.entities,
+                "extra_data": extra_data,
+            }
+        )
+
+    # Bulk create new messages
+    new_message_records = message_repo.bulk_create(message_data)
+    logger.info(f"Created {len(new_message_records)} new message records")
+
+    # Create FileTouched records from new code changes
+    new_code_changes = []
+    for msg in new_messages:
+        new_code_changes.extend(msg.code_changes)
+
+    for code_change in new_code_changes:
+        file_touched = FileTouched(
+            conversation_id=existing_conversation.id,
+            epoch_id=epoch.id,
+            file_path=code_change.file_path,
+            change_type=code_change.change_type,
+            lines_added=code_change.lines_added,
+            lines_deleted=code_change.lines_deleted,
+            timestamp=parsed.end_time or parsed.start_time,
+        )
+        session.add(file_touched)
+
+    if new_code_changes:
+        logger.debug(f"Created {len(new_code_changes)} new file touched records")
+
+    # Update conversation metadata
+    if parsed.end_time:
+        existing_conversation.end_time = parsed.end_time
+        existing_conversation.status = "completed"
+
+    # Increment denormalized counts
+    existing_conversation.message_count += len(new_messages)
+    existing_conversation.files_count += len(new_code_changes)
+    # epoch_count stays the same (still 1 epoch per conversation)
+
+    logger.debug(
+        f"Updated counts: messages={existing_conversation.message_count}, "
+        f"files={existing_conversation.files_count}"
+    )
+
+    # Update raw_log state tracking
+    # Note: This assumes parsed contains the incremental state info
+    # In practice, the caller should provide IncrementalParseResult
+    # For now, we'll update file_size_bytes based on current file
+    raw_log_repo = RawLogRepository(session)
+    if existing_raw_log.file_path:
+        file_path = Path(existing_raw_log.file_path)
+        if file_path.exists():
+            from catsyphon.parsers.incremental import calculate_partial_hash
+
+            file_size = file_path.stat().st_size
+            partial_hash = calculate_partial_hash(file_path, file_size)
+
+            # Get last message timestamp
+            last_message_timestamp = None
+            if new_messages:
+                last_message_timestamp = new_messages[-1].timestamp
+
+            # Update raw_log state
+            raw_log_repo.update_state(
+                raw_log=existing_raw_log,
+                last_processed_offset=file_size,
+                last_processed_line=existing_conversation.message_count,
+                file_size_bytes=file_size,
+                partial_hash=partial_hash,
+                last_message_timestamp=last_message_timestamp,
+            )
+            logger.debug("Updated raw_log incremental state")
+
+    # Flush and refresh
+    session.flush()
+    session.refresh(existing_conversation)
+
+    logger.info(
+        f"Incremental append complete: conversation={existing_conversation.id}, "
+        f"added {len(new_messages)} messages, "
+        f"total={existing_conversation.message_count}"
+    )
+
+    return existing_conversation
+
+
+def ingest_messages_incremental(
+    session: Session,
+    incremental_result: IncrementalParseResult,
+    conversation_id: str,
+    raw_log_id: str,
+    tags: Optional[dict] = None,
+) -> Conversation:
+    """
+    Ingest only NEW messages from incremental parsing (Phase 2).
+
+    This is the main entry point for incremental updates, called by
+    the watch daemon when it detects an append operation.
+
+    Args:
+        session: Database session
+        incremental_result: Result from ClaudeCodeParser.parse_incremental()
+        conversation_id: UUID of existing conversation
+        raw_log_id: UUID of existing raw_log
+        tags: Optional tags for new messages
+
+    Returns:
+        Updated conversation instance
+
+    Example:
+        from catsyphon.parsers.claude_code import ClaudeCodeParser
+        from catsyphon.db.connection import get_db
+
+        parser = ClaudeCodeParser()
+        result = parser.parse_incremental(file_path, last_offset, last_line)
+
+        with get_db() as session:
+            conversation = ingest_messages_incremental(
+                session,
+                result,
+                conversation_id,
+                raw_log_id,
+            )
+            session.commit()
+    """
+    import uuid
+
+    logger.info(
+        f"Incremental ingest: conversation={conversation_id}, "
+        f"new_messages={len(incremental_result.new_messages)}"
+    )
+
+    # Get existing conversation and raw_log
+    conversation_repo = ConversationRepository(session)
+    raw_log_repo = RawLogRepository(session)
+
+    conversation = conversation_repo.get(uuid.UUID(conversation_id))
+    if not conversation:
+        raise ValueError(f"Conversation not found: {conversation_id}")
+
+    raw_log = raw_log_repo.get(uuid.UUID(raw_log_id))
+    if not raw_log:
+        raise ValueError(f"Raw log not found: {raw_log_id}")
+
+    # Get existing epoch (assume 1 epoch per conversation for now)
+    epoch_repo = EpochRepository(session)
+    message_repo = MessageRepository(session)
+
+    epochs = (
+        session.query(Epoch)
+        .filter(Epoch.conversation_id == conversation.id)
+        .order_by(Epoch.sequence.desc())
+        .all()
+    )
+
+    if epochs:
+        epoch = epochs[0]
+    else:
+        # Create epoch if none exists
+        epoch = epoch_repo.create_epoch(
+            conversation_id=conversation.id,
+            sequence=0,
+            start_time=conversation.start_time,
+            end_time=conversation.end_time,
+        )
+
+    # Get current message count for sequencing
+    existing_message_count = conversation.message_count
+
+    # Create Message records for NEW messages only
+    message_data = []
+    for idx, msg in enumerate(incremental_result.new_messages):
+        sequence = existing_message_count + idx
+
+        # Serialize tool calls and code changes
+        tool_calls_json = [
+            {
+                "tool_name": tc.tool_name,
+                "parameters": tc.parameters,
+                "result": tc.result,
+                "success": tc.success,
+                "timestamp": tc.timestamp.isoformat() if tc.timestamp else None,
+            }
+            for tc in msg.tool_calls
+        ]
+
+        code_changes_json = [
+            {
+                "file_path": cc.file_path,
+                "change_type": cc.change_type,
+                "old_content": cc.old_content,
+                "new_content": cc.new_content,
+                "lines_added": cc.lines_added,
+                "lines_deleted": cc.lines_deleted,
+            }
+            for cc in msg.code_changes
+        ]
+
+        extra_data = {}
+        if msg.model:
+            extra_data["model"] = msg.model
+        if msg.token_usage:
+            extra_data["token_usage"] = msg.token_usage
+
+        message_data.append(
+            {
+                "epoch_id": epoch.id,
+                "conversation_id": conversation.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp,
+                "sequence": sequence,
+                "tool_calls": tool_calls_json,
+                "code_changes": code_changes_json,
+                "entities": msg.entities,
+                "extra_data": extra_data,
+            }
+        )
+
+    # Bulk create messages
+    new_messages = message_repo.bulk_create(message_data)
+    logger.info(f"Created {len(new_messages)} new message records")
+
+    # Create FileTouched records
+    new_code_changes = []
+    for msg in incremental_result.new_messages:
+        new_code_changes.extend(msg.code_changes)
+
+    for code_change in new_code_changes:
+        file_touched = FileTouched(
+            conversation_id=conversation.id,
+            epoch_id=epoch.id,
+            file_path=code_change.file_path,
+            change_type=code_change.change_type,
+            lines_added=code_change.lines_added,
+            lines_deleted=code_change.lines_deleted,
+            timestamp=incremental_result.last_message_timestamp
+            or conversation.end_time,
+        )
+        session.add(file_touched)
+
+    # Update conversation counts
+    conversation.message_count += len(incremental_result.new_messages)
+    conversation.files_count += len(new_code_changes)
+
+    # Update epoch end time if available
+    if incremental_result.last_message_timestamp:
+        epoch.end_time = incremental_result.last_message_timestamp
+        conversation.end_time = incremental_result.last_message_timestamp
+
+    # Update raw_log state
+    raw_log_repo.update_state(
+        raw_log=raw_log,
+        last_processed_offset=incremental_result.last_processed_offset,
+        last_processed_line=incremental_result.last_processed_line,
+        file_size_bytes=incremental_result.file_size_bytes,
+        partial_hash=incremental_result.partial_hash,
+        last_message_timestamp=incremental_result.last_message_timestamp,
+    )
+
+    logger.debug(
+        f"Updated raw_log state: offset={incremental_result.last_processed_offset}, "
+        f"line={incremental_result.last_processed_line}"
+    )
+
+    # Flush and refresh
+    session.flush()
+    session.refresh(conversation)
+
+    logger.info(
+        f"Incremental ingest complete: conversation={conversation.id}, "
+        f"added={len(new_messages)}, total={conversation.message_count}"
     )
 
     return conversation

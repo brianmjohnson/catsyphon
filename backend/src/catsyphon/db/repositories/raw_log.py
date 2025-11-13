@@ -75,6 +75,18 @@ class RawLogRepository(BaseRepository[RawLog]):
         """
         return self.session.query(RawLog).filter(RawLog.file_hash == file_hash).first()
 
+    def get_by_file_path(self, file_path: str) -> Optional[RawLog]:
+        """
+        Get raw log by file path (for incremental parsing).
+
+        Args:
+            file_path: Path to the log file
+
+        Returns:
+            Raw log instance if found, None otherwise
+        """
+        return self.session.query(RawLog).filter(RawLog.file_path == file_path).first()
+
     def exists_by_file_hash(self, file_hash: str) -> bool:
         """
         Check if a raw log with the given file hash exists.
@@ -162,3 +174,34 @@ class RawLogRepository(BaseRepository[RawLog]):
             file_hash=file_hash,
             **kwargs,
         )
+
+    def update_state(
+        self,
+        raw_log: RawLog,
+        last_processed_offset: int,
+        last_processed_line: int,
+        file_size_bytes: int,
+        partial_hash: str,
+        last_message_timestamp: Optional[object] = None,
+    ) -> RawLog:
+        """
+        Update incremental parsing state for a raw log.
+
+        Args:
+            raw_log: Raw log instance to update
+            last_processed_offset: New byte offset where parsing stopped
+            last_processed_line: New line number where parsing stopped
+            file_size_bytes: Current file size in bytes
+            partial_hash: SHA-256 hash of content up to last_processed_offset
+            last_message_timestamp: Timestamp of last processed message
+
+        Returns:
+            Updated raw log instance
+        """
+        raw_log.last_processed_offset = last_processed_offset
+        raw_log.last_processed_line = last_processed_line
+        raw_log.file_size_bytes = file_size_bytes
+        raw_log.partial_hash = partial_hash
+        raw_log.last_message_timestamp = last_message_timestamp
+        self.session.flush()
+        return raw_log

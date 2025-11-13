@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from catsyphon.parsers.incremental import ChangeType
 from catsyphon.watch import FileWatcher, RetryQueue, WatcherStats
 
 
@@ -118,20 +119,21 @@ class TestFileProcessing:
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
-        mock_conversation_id = "test-conv-123"
+        # Create mock conversation object with .id attribute
+        mock_conversation = Mock()
+        mock_conversation.id = "test-conv-123"
 
         with (
             patch("catsyphon.watch.db_session") as mock_db_session,
-            patch("catsyphon.watch.calculate_file_hash") as mock_hash,
             patch("catsyphon.watch.ingest_conversation") as mock_ingest,
         ):
             # Setup mocks
-            mock_hash.return_value = "test_hash_123"
-            mock_ingest.return_value = mock_conversation_id
+            mock_ingest.return_value = mock_conversation
 
             mock_session = Mock()
             mock_repo = Mock()
-            mock_repo.exists_by_file_hash.return_value = False
+            # New file - no existing raw_log
+            mock_repo.get_by_file_path.return_value = None
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock(return_value=False)
             mock_db_session.return_value = mock_session
@@ -145,45 +147,31 @@ class TestFileProcessing:
 
                 # Verify stats updated
                 assert file_watcher.stats.files_processed == 1
-                assert "test_hash_123" in file_watcher.processed_hashes
 
     def test_skip_duplicate_in_memory_cache(
         self, file_watcher, tmp_path, valid_jsonl_content
     ):
-        """Test skipping files already in in-memory cache."""
-        test_file = tmp_path / "conversation.jsonl"
-        test_file.write_text(valid_jsonl_content)
-
-        with patch("catsyphon.watch.calculate_file_hash") as mock_hash:
-            mock_hash.return_value = "cached_hash"
-
-            # Add to cache
-            file_watcher.processed_hashes.add("cached_hash")
-
-            # Process file
-            file_watcher._process_file(test_file)
-            time.sleep(0.2)
-
-            # Should be skipped
-            assert file_watcher.stats.files_skipped == 1
-            assert file_watcher.stats.files_processed == 0
-
-    def test_skip_duplicate_in_database(
-        self, file_watcher, tmp_path, valid_jsonl_content
-    ):
-        """Test skipping files that exist in database."""
+        """Test skipping files with no changes (UNCHANGED)."""
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
         with (
             patch("catsyphon.watch.db_session") as mock_db_session,
-            patch("catsyphon.watch.calculate_file_hash") as mock_hash,
+            patch("catsyphon.watch.detect_file_change_type") as mock_detect,
         ):
-            mock_hash.return_value = "db_hash_123"
-
             mock_session = Mock()
             mock_repo = Mock()
-            mock_repo.exists_by_file_hash.return_value = True  # Duplicate
+
+            # Existing raw_log with proper attributes
+            existing_raw_log = Mock()
+            existing_raw_log.last_processed_offset = len(valid_jsonl_content.encode())
+            existing_raw_log.file_size_bytes = len(valid_jsonl_content.encode())
+            existing_raw_log.partial_hash = "hash123"
+            mock_repo.get_by_file_path.return_value = existing_raw_log
+
+            # File unchanged
+            mock_detect.return_value = ChangeType.UNCHANGED
+
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock(return_value=False)
             mock_db_session.return_value = mock_session
@@ -193,27 +181,91 @@ class TestFileProcessing:
                 file_watcher._process_file(test_file)
                 time.sleep(0.2)
 
-                # Should be skipped and added to cache
+                # Should be skipped
                 assert file_watcher.stats.files_skipped == 1
-                assert "db_hash_123" in file_watcher.processed_hashes
+                assert file_watcher.stats.files_processed == 0
+
+    def test_skip_duplicate_in_database(
+        self, file_watcher, tmp_path, valid_jsonl_content
+    ):
+        """Test skipping files that exist in database with no changes."""
+        test_file = tmp_path / "conversation.jsonl"
+        test_file.write_text(valid_jsonl_content)
+
+        with (
+            patch("catsyphon.watch.db_session") as mock_db_session,
+            patch("catsyphon.watch.detect_file_change_type") as mock_detect,
+        ):
+            mock_session = Mock()
+            mock_repo = Mock()
+
+            # Existing raw_log with proper attributes
+            existing_raw_log = Mock()
+            existing_raw_log.last_processed_offset = len(valid_jsonl_content.encode())
+            existing_raw_log.file_size_bytes = len(valid_jsonl_content.encode())
+            existing_raw_log.partial_hash = "db_hash_123"
+            mock_repo.get_by_file_path.return_value = existing_raw_log
+
+            # File unchanged
+            mock_detect.return_value = ChangeType.UNCHANGED
+
+            mock_session.__enter__ = Mock(return_value=mock_session)
+            mock_session.__exit__ = Mock(return_value=False)
+            mock_db_session.return_value = mock_session
+
+            with patch("catsyphon.watch.RawLogRepository", return_value=mock_repo):
+                # Process file
+                file_watcher._process_file(test_file)
+                time.sleep(0.2)
+
+                # Should be skipped
+                assert file_watcher.stats.files_skipped == 1
 
     def test_handle_file_hash_calculation_error(
         self, file_watcher, tmp_path, valid_jsonl_content
     ):
-        """Test handling file hash calculation errors."""
+        """Test handling errors in change detection."""
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
-        with patch("catsyphon.watch.calculate_file_hash") as mock_hash:
-            mock_hash.side_effect = Exception("Hash calculation failed")
+        # Create mock conversation object
+        mock_conversation = Mock()
+        mock_conversation.id = "conv-123"
 
-            # Process file
-            file_watcher._process_file(test_file)
-            time.sleep(0.2)
+        with (
+            patch("catsyphon.watch.db_session") as mock_db_session,
+            patch("catsyphon.watch.detect_file_change_type") as mock_detect,
+            patch("catsyphon.watch.ingest_conversation") as mock_ingest,
+        ):
+            mock_session = Mock()
+            mock_repo = Mock()
 
-            # Should not crash, stats should not change
-            assert file_watcher.stats.files_processed == 0
-            assert file_watcher.stats.files_failed == 0  # Error before processing
+            # Existing raw_log with proper attributes
+            existing_raw_log = Mock()
+            existing_raw_log.last_processed_offset = 1000
+            existing_raw_log.file_size_bytes = 1000
+            existing_raw_log.partial_hash = "hash123"
+            mock_repo.get_by_file_path.return_value = existing_raw_log
+
+            # Detect raises error - should fall back to full reparse
+            mock_detect.side_effect = Exception("Change detection failed")
+
+            # Mock successful full reparse
+            mock_ingest.return_value = mock_conversation
+
+            mock_session.__enter__ = Mock(return_value=mock_session)
+            mock_session.__exit__ = Mock(return_value=False)
+            mock_db_session.return_value = mock_session
+
+            with patch("catsyphon.watch.RawLogRepository", return_value=mock_repo):
+                # Process file
+                file_watcher._process_file(test_file)
+                time.sleep(0.2)
+
+                # Error should be caught gracefully
+                # Full reparse succeeds, so files_processed increments
+                assert file_watcher.stats.files_processed == 1
+                assert file_watcher.stats.files_failed == 0
 
     @pytest.mark.skip(
         reason="Complex mock interaction - retry queue logic verified in integration tests"
@@ -249,17 +301,20 @@ class TestStatsTracking:
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
+        # Create mock conversation object with .id attribute
+        mock_conversation = Mock()
+        mock_conversation.id = "conv1"
+
         with (
             patch("catsyphon.watch.db_session") as mock_db_session,
-            patch("catsyphon.watch.calculate_file_hash") as mock_hash,
             patch("catsyphon.watch.ingest_conversation") as mock_ingest,
         ):
-            mock_hash.return_value = "hash1"
-            mock_ingest.return_value = "conv1"
+            mock_ingest.return_value = mock_conversation
 
             mock_session = Mock()
             mock_repo = Mock()
-            mock_repo.exists_by_file_hash.return_value = False
+            # New file - no existing raw_log
+            mock_repo.get_by_file_path.return_value = None
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock(return_value=False)
             mock_db_session.return_value = mock_session
@@ -274,39 +329,54 @@ class TestStatsTracking:
     def test_increment_files_skipped_for_duplicates(
         self, file_watcher, tmp_path, valid_jsonl_content
     ):
-        """Test files_skipped is incremented for duplicate files."""
+        """Test files_skipped is incremented for unchanged files."""
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
-        with patch("catsyphon.watch.calculate_file_hash") as mock_hash:
-            mock_hash.return_value = "dup_hash"
-            file_watcher.processed_hashes.add("dup_hash")
+        with (
+            patch("catsyphon.watch.db_session") as mock_db_session,
+            patch("catsyphon.watch.detect_file_change_type") as mock_detect,
+        ):
+            mock_session = Mock()
+            mock_repo = Mock()
 
-            file_watcher._process_file(test_file)
-            time.sleep(0.2)
+            # Existing raw_log with proper attributes
+            existing_raw_log = Mock()
+            existing_raw_log.last_processed_offset = len(valid_jsonl_content.encode())
+            existing_raw_log.file_size_bytes = len(valid_jsonl_content.encode())
+            existing_raw_log.partial_hash = "dup_hash"
+            mock_repo.get_by_file_path.return_value = existing_raw_log
 
-            assert file_watcher.stats.files_skipped == 1
-            assert file_watcher.stats.last_activity is not None
+            # File unchanged
+            mock_detect.return_value = ChangeType.UNCHANGED
+
+            mock_session.__enter__ = Mock(return_value=mock_session)
+            mock_session.__exit__ = Mock(return_value=False)
+            mock_db_session.return_value = mock_session
+
+            with patch("catsyphon.watch.RawLogRepository", return_value=mock_repo):
+                file_watcher._process_file(test_file)
+                time.sleep(0.2)
+
+                assert file_watcher.stats.files_skipped == 1
+                assert file_watcher.stats.last_activity is not None
 
     def test_increment_files_failed_on_errors(self, file_watcher, tmp_path):
         """Test files_failed is incremented on processing errors."""
         test_file = tmp_path / "bad.jsonl"
         test_file.write_text("malformed content")
 
-        with (
-            patch("catsyphon.watch.db_session") as mock_db_session,
-            patch("catsyphon.watch.calculate_file_hash") as mock_hash,
-        ):
-            mock_hash.return_value = "bad_hash"
-
+        with patch("catsyphon.watch.db_session") as mock_db_session:
             mock_session = Mock()
             mock_repo = Mock()
-            mock_repo.exists_by_file_hash.return_value = False
+            # New file - no existing raw_log
+            mock_repo.get_by_file_path.return_value = None
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock(return_value=False)
             mock_db_session.return_value = mock_session
 
             with patch("catsyphon.watch.RawLogRepository", return_value=mock_repo):
+                # Parsing will fail due to malformed content
                 file_watcher._process_file(test_file)
                 time.sleep(0.3)
 
@@ -324,18 +394,16 @@ class TestConcurrency:
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
-        with patch("catsyphon.watch.calculate_file_hash") as mock_hash:
-            mock_hash.return_value = "test_hash"
-
+        with patch("catsyphon.watch.db_session") as mock_db_session:
             # Add file to processing set
             file_watcher.processing.add(str(test_file))
 
-            # Try to process - should be skipped
+            # Try to process - should be skipped immediately
             file_watcher._process_file(test_file)
             time.sleep(0.1)
 
-            # Hash should not have been called
-            mock_hash.assert_not_called()
+            # Database session should not have been called
+            mock_db_session.assert_not_called()
 
     def test_removes_from_processing_after_completion(
         self, file_watcher, tmp_path, valid_jsonl_content
@@ -344,17 +412,20 @@ class TestConcurrency:
         test_file = tmp_path / "conversation.jsonl"
         test_file.write_text(valid_jsonl_content)
 
+        # Create mock conversation object with .id attribute
+        mock_conversation = Mock()
+        mock_conversation.id = "conv1"
+
         with (
             patch("catsyphon.watch.db_session") as mock_db_session,
-            patch("catsyphon.watch.calculate_file_hash") as mock_hash,
             patch("catsyphon.watch.ingest_conversation") as mock_ingest,
         ):
-            mock_hash.return_value = "hash1"
-            mock_ingest.return_value = "conv1"
+            mock_ingest.return_value = mock_conversation
 
             mock_session = Mock()
             mock_repo = Mock()
-            mock_repo.exists_by_file_hash.return_value = False
+            # New file - no existing raw_log
+            mock_repo.get_by_file_path.return_value = None
             mock_session.__enter__ = Mock(return_value=mock_session)
             mock_session.__exit__ = Mock(return_value=False)
             mock_db_session.return_value = mock_session

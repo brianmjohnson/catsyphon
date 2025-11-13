@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional, Set
 
 if TYPE_CHECKING:
     from catsyphon.tagging.pipeline import TaggingPipeline
@@ -25,9 +25,13 @@ from catsyphon.config import settings
 from catsyphon.db.connection import db_session
 from catsyphon.db.repositories.raw_log import RawLogRepository
 from catsyphon.exceptions import DuplicateFileError
+from catsyphon.parsers.claude_code import ClaudeCodeParser
+from catsyphon.parsers.incremental import ChangeType, detect_file_change_type
 from catsyphon.parsers.registry import get_default_registry
-from catsyphon.pipeline.ingestion import ingest_conversation
-from catsyphon.utils.hashing import calculate_file_hash
+from catsyphon.pipeline.ingestion import (
+    ingest_conversation,
+    ingest_messages_incremental,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,13 +171,15 @@ class FileWatcher(FileSystemEventHandler):
 
     def on_created(self, event: FileSystemEvent) -> None:
         """Handle file creation events."""
-        if not event.is_directory and event.src_path.endswith(".jsonl"):
-            self._handle_file_event(Path(event.src_path))
+        path = str(event.src_path)
+        if not event.is_directory and path.endswith(".jsonl"):
+            self._handle_file_event(Path(path))
 
     def on_modified(self, event: FileSystemEvent) -> None:
         """Handle file modification events."""
-        if not event.is_directory and event.src_path.endswith(".jsonl"):
-            self._handle_file_event(Path(event.src_path))
+        path = str(event.src_path)
+        if not event.is_directory and path.endswith(".jsonl"):
+            self._handle_file_event(Path(path))
 
     def _handle_file_event(self, file_path: Path) -> None:
         """
@@ -220,33 +226,69 @@ class FileWatcher(FileSystemEventHandler):
 
             logger.info(f"Detected file: {file_path.name}")
 
-            # Calculate file hash
-            try:
-                file_hash = calculate_file_hash(file_path)
-            except Exception as e:
-                logger.error(f"Failed to calculate hash for {file_path.name}: {e}")
-                return
-
-            # Check if already processed (in-memory cache first)
-            if file_hash in self.processed_hashes:
-                logger.debug(f"Skipped {file_path.name} (already processed in session)")
-                self.stats.files_skipped += 1
-                self.stats.last_activity = datetime.now()
-                return
-
-            # Check database for duplicates
+            # Check database for existing raw_log
             with db_session() as session:
                 raw_log_repo = RawLogRepository(session)
 
-                if raw_log_repo.exists_by_file_hash(file_hash):
-                    logger.debug(f"Skipped {file_path.name} (duplicate in database)")
-                    self.stats.files_skipped += 1
-                    self.stats.last_activity = datetime.now()
-                    # Add to cache to avoid future database checks
-                    self.processed_hashes.add(file_hash)
-                    return
+                # Check if we've seen this file before (by path)
+                existing_raw_log = raw_log_repo.get_by_file_path(str(file_path))
 
-                # Parse and ingest the file
+                if existing_raw_log:
+                    # File exists in database - detect change type
+                    try:
+                        change_type = detect_file_change_type(
+                            file_path,
+                            existing_raw_log.last_processed_offset,
+                            existing_raw_log.file_size_bytes,
+                            existing_raw_log.partial_hash,
+                        )
+
+                        logger.debug(
+                            f"Change detection: {change_type.value} "
+                            f"for {file_path.name}"
+                        )
+
+                        if change_type == ChangeType.UNCHANGED:
+                            logger.debug(
+                                f"Skipped {file_path.name} (no changes detected)"
+                            )
+                            self.stats.files_skipped += 1
+                            self.stats.last_activity = datetime.now()
+                            return
+
+                        elif change_type == ChangeType.APPEND:
+                            # Incremental update: parse only new content
+                            logger.info(f"Incremental update for {file_path.name}")
+                            try:
+                                self._process_incremental_update(
+                                    session, file_path, existing_raw_log
+                                )
+                                self.stats.files_processed += 1
+                                self.stats.last_activity = datetime.now()
+                                return
+                            except Exception as e:
+                                # Fall back to full reparse on error
+                                logger.warning(
+                                    f"Incremental update failed for "
+                                    f"{file_path.name}: {e}, "
+                                    f"falling back to full reparse"
+                                )
+                                # Continue to full reparse below
+
+                        # TRUNCATE or REWRITE: full reparse required
+                        logger.info(
+                            f"Full reparse required for {file_path.name} "
+                            f"({change_type.value})"
+                        )
+                    except Exception as e:
+                        # Change detection failed - fall back to full reparse
+                        logger.warning(
+                            f"Change detection failed for {file_path.name}: {e}, "
+                            "falling back to full reparse"
+                        )
+                        # Continue to full reparse below
+
+                # Parse and ingest the file (full parse)
                 try:
                     # Parse conversation (auto-detects format)
                     parsed = self.parser_registry.parse(file_path)
@@ -268,8 +310,11 @@ class FileWatcher(FileSystemEventHandler):
                             )
                             tags = None  # Continue without tags
 
+                    # Determine update mode based on whether file exists
+                    update_mode = "replace" if existing_raw_log else "skip"
+
                     # Ingest into database
-                    conversation_id = ingest_conversation(
+                    conversation = ingest_conversation(
                         session=session,
                         parsed=parsed,
                         project_name=self.project_name,
@@ -277,16 +322,14 @@ class FileWatcher(FileSystemEventHandler):
                         file_path=file_path,
                         tags=tags,
                         skip_duplicates=True,
+                        update_mode=update_mode,
                     )
 
                     logger.info(
-                        f"✓ Processed {file_path.name} → conversation {conversation_id}"
+                        f"✓ Processed {file_path.name} → conversation {conversation.id}"
                     )
                     self.stats.files_processed += 1
                     self.stats.last_activity = datetime.now()
-
-                    # Add to cache
-                    self.processed_hashes.add(file_hash)
 
                     # Remove from retry queue if present
                     if self.retry_queue:
@@ -297,7 +340,6 @@ class FileWatcher(FileSystemEventHandler):
                     logger.debug(f"Skipped {file_path.name} (duplicate detected)")
                     self.stats.files_skipped += 1
                     self.stats.last_activity = datetime.now()
-                    self.processed_hashes.add(file_hash)
 
                 except Exception as e:
                     error_msg = f"{type(e).__name__}: {str(e)}"
@@ -311,6 +353,62 @@ class FileWatcher(FileSystemEventHandler):
 
         finally:
             self.processing.discard(path_str)
+
+    def _process_incremental_update(
+        self, session: Any, file_path: Path, existing_raw_log: Any
+    ) -> None:
+        """
+        Process incremental update using parse_incremental().
+
+        This method implements the fast path for file appends, parsing
+        only NEW content and updating the database incrementally.
+
+        Args:
+            session: Database session
+            file_path: Path to the log file
+            existing_raw_log: Existing RawLog with state tracking
+
+        Raises:
+            Exception: If incremental parsing fails (caller will fall back to full reparse)
+        """
+        logger.debug(
+            f"Incremental parse: offset={existing_raw_log.last_processed_offset}, "
+            f"line={existing_raw_log.last_processed_line}"
+        )
+
+        # Use ClaudeCodeParser for incremental parsing
+        # TODO: Make this work with parser registry for other formats
+        parser = ClaudeCodeParser()
+
+        # Parse only NEW content
+        incremental_result = parser.parse_incremental(
+            file_path,
+            existing_raw_log.last_processed_offset,
+            existing_raw_log.last_processed_line,
+        )
+
+        if not incremental_result.new_messages:
+            logger.debug(f"No new messages in {file_path.name}")
+            return
+
+        logger.info(
+            f"Incremental parse: {len(incremental_result.new_messages)} new messages "
+            f"in {file_path.name}"
+        )
+
+        # Ingest only new messages
+        conversation = ingest_messages_incremental(
+            session=session,
+            incremental_result=incremental_result,
+            conversation_id=str(existing_raw_log.conversation_id),
+            raw_log_id=str(existing_raw_log.id),
+            tags=None,  # TODO: Support tagging for incremental updates
+        )
+
+        logger.info(
+            f"✓ Incremental update: {file_path.name} → conversation {conversation.id} "
+            f"(+{len(incremental_result.new_messages)} messages)"
+        )
 
 
 class WatcherDaemon:
@@ -417,7 +515,7 @@ class WatcherDaemon:
 
         logger.info("✓ Watch daemon stopped")
 
-    def _signal_handler(self, signum: int, frame) -> None:
+    def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
         logger.info(f"Received signal {signum}, shutting down...")
         self.stop()

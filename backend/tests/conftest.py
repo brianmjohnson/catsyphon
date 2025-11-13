@@ -150,6 +150,10 @@ def sample_conversation(
         iteration_count=3,
         tags={"feature": "authentication"},
         extra_data={"session_id": "test-session-123"},
+        # Initialize denormalized counts
+        message_count=0,
+        epoch_count=0,
+        files_count=0,
     )
     db_session.add(conversation)
     db_session.commit()
@@ -174,6 +178,8 @@ def sample_epoch(db_session: Session, sample_conversation: Conversation) -> Epoc
         extra_data={"complexity": "medium"},
     )
     db_session.add(epoch)
+    # Update denormalized epoch count
+    sample_conversation.epoch_count += 1
     db_session.commit()
     db_session.refresh(epoch)
     return epoch
@@ -200,6 +206,8 @@ def sample_message(
         entities={"files": ["auth.py"], "technologies": ["Python", "FastAPI"]},
     )
     db_session.add(message)
+    # Update denormalized message count
+    sample_conversation.message_count += 1
     db_session.commit()
     db_session.refresh(message)
     return message

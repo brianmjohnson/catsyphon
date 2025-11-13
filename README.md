@@ -6,8 +6,9 @@ CatSyphon parses, analyzes, and extracts insights from coding agent conversation
 
 ## Features
 
-### Phase 1: Data Foundation (Current)
+### Phase 1-2: Data Foundation & Performance (Current)
 - 📝 **Multi-agent log parsing** - Parse logs from Claude Code (with extensible plugin architecture)
+- ⚡ **Incremental parsing** - 10x to 106x faster parsing with 45x to 465x memory reduction
 - 👀 **Live directory watching** - Automatic ingestion of new conversation logs with file deduplication
 - 🤖 **AI-powered tagging** - Enrich conversations with sentiment, intent, and outcome analysis
 - 🗄️ **PostgreSQL storage** - Structured storage with rich metadata
@@ -15,13 +16,13 @@ CatSyphon parses, analyzes, and extracts insights from coding agent conversation
 - 💻 **CLI tool** - Command-line interface for ingestion and management
 - 🖥️ **Web UI** - View and explore conversations with real-time freshness indicators
 
-### Phase 2: Analytics Dashboards (Planned)
+### Phase 3: Analytics Dashboards (Planned)
 - 📊 Overview dashboard - Executive metrics and trends
 - 🎯 Agent performance - Multi-agent comparative analytics
 - 👥 Developer patterns - Usage analysis and insights
 - 🔎 Conversation explorer - Search and filter conversations
 
-### Phase 3: Developer Features (Planned)
+### Phase 4: Developer Features (Planned)
 - 🎨 Feature tracking - Automatic feature detection and progress
 - 🔍 Semantic search - Natural language search across conversations
 - 📋 Query templates - Pre-built and custom queries
@@ -122,6 +123,33 @@ uv run uvicorn catsyphon.api.app:app --reload
 ```
 
 Visit http://localhost:8000/docs for interactive API documentation.
+
+## Performance
+
+CatSyphon includes **incremental parsing** for dramatically improved performance when processing log files that are actively being appended to (live sessions, watch daemon monitoring, etc.).
+
+### Benchmarks
+
+**Speed Improvements (vs full reparse):**
+- Small append (1 to 100 messages): **9.9x faster**
+- Medium log (10 to 1000 messages): **36.6x faster**
+- Large log (1 to 5000 messages): **106.0x faster**
+- Multiple sequential appends: **14.0x faster**
+
+**Memory Reduction:**
+- 1,000 messages: **45x less memory**
+- 50,000 messages: **465x less memory**
+
+### How It Works
+
+1. **First parse**: Full parse stores state (offset, line number, hash) in database
+2. **Subsequent parses**: Automatically detects file changes (APPEND, TRUNCATE, REWRITE, UNCHANGED)
+3. **Smart routing**: Parses only new content for appends, skips unchanged files
+4. **Graceful fallback**: Falls back to full reparse if incremental parsing fails
+
+Incremental parsing is **automatically used** by the watch daemon, CLI `ingest` command, and API ingestion - no configuration required!
+
+Run benchmarks: `cd backend && uv run pytest tests/test_performance.py -v -s -m benchmark`
 
 ## Project Structure
 

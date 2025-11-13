@@ -598,3 +598,406 @@ class TestTransactionHandling:
         assert epoch.outcome == "success"
         assert epoch.sentiment == "positive"
         assert epoch.sentiment_score == 0.8
+
+
+class TestConversationUpdates:
+    """Tests for conversation update modes (skip, replace, append)."""
+
+    def test_update_mode_skip(self, db_session: Session):
+        """Test that skip mode returns existing conversation without changes."""
+        session_id = "test-session-skip"
+        now = datetime.now(UTC)
+
+        # Create initial conversation
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=now + timedelta(minutes=5),
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Original message",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1)
+        original_id = conv1.id
+        original_message_count = len(conv1.messages)
+        db_session.commit()
+
+        # Try to ingest again with skip mode (default)
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=now + timedelta(minutes=10),
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="New message",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv2 = ingest_conversation(db_session, parsed2, update_mode="skip")
+
+        # Should return same conversation
+        assert conv2.id == original_id
+        assert len(conv2.messages) == original_message_count
+        assert conv2.messages[0].content == "Original message"
+
+    def test_update_mode_replace(self, db_session: Session):
+        """Test that replace mode deletes children and recreates with new data."""
+        session_id = "test-session-replace"
+        now = datetime.now(UTC)
+
+        # Create initial conversation with 2 messages
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=now + timedelta(minutes=5),
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Message 1",
+                    timestamp=now,
+                ),
+                ParsedMessage(
+                    role="assistant",
+                    content="Message 2",
+                    timestamp=now + timedelta(seconds=1),
+                ),
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1)
+        original_id = conv1.id
+        db_session.commit()
+
+        # Update with 3 messages using replace mode
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=now + timedelta(minutes=10),
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Message 1",
+                    timestamp=now,
+                ),
+                ParsedMessage(
+                    role="assistant",
+                    content="Message 2",
+                    timestamp=now + timedelta(seconds=1),
+                ),
+                ParsedMessage(
+                    role="user",
+                    content="Message 3 (new)",
+                    timestamp=now + timedelta(seconds=2),
+                ),
+            ],
+        )
+
+        conv2 = ingest_conversation(db_session, parsed2, update_mode="replace")
+        db_session.commit()
+
+        # Should preserve conversation ID
+        assert conv2.id == original_id
+
+        # Should have new message count
+        assert len(conv2.messages) == 3
+        assert conv2.messages[2].content == "Message 3 (new)"
+
+        # Verify denormalized count is updated
+        assert conv2.message_count == 3
+
+    def test_update_mode_replace_preserves_id(self, db_session: Session):
+        """Test that replace mode preserves conversation ID."""
+        session_id = "test-session-preserve-id"
+        now = datetime.now(UTC)
+
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Original",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1, project_name="project1")
+        original_id = conv1.id
+        db_session.commit()
+
+        # Update with different project
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=now + timedelta(minutes=1),
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Updated",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv2 = ingest_conversation(
+            db_session, parsed2, project_name="project2", update_mode="replace"
+        )
+        db_session.commit()
+
+        # Verify ID is preserved
+        assert conv2.id == original_id
+
+        # Verify project was updated
+        assert conv2.project.name == "project2"
+
+    def test_update_mode_replace_updates_counts(self, db_session: Session):
+        """Test that replace mode correctly updates denormalized counts."""
+        session_id = "test-session-counts"
+        now = datetime.now(UTC)
+
+        # Create initial conversation with files
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=now,
+                )
+            ],
+            files_touched=["file1.py", "file2.py"],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1)
+        db_session.commit()
+
+        # Verify initial counts
+        assert conv1.message_count == 1
+        assert conv1.files_count == 2
+
+        # Update with more files
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test 1",
+                    timestamp=now,
+                ),
+                ParsedMessage(
+                    role="assistant",
+                    content="Test 2",
+                    timestamp=now + timedelta(seconds=1),
+                ),
+            ],
+            files_touched=["file1.py", "file2.py", "file3.py", "file4.py"],
+        )
+
+        conv2 = ingest_conversation(db_session, parsed2, update_mode="replace")
+        db_session.commit()
+
+        # Verify counts were updated
+        assert conv2.message_count == 2
+        assert conv2.files_count == 4
+
+    def test_update_mode_replace_with_raw_log(self, db_session: Session, tmp_path):
+        """Test that replace mode handles raw_log updates correctly."""
+        session_id = "test-session-raw-log"
+        now = datetime.now(UTC)
+
+        # Create initial conversation with raw log
+        log_file1 = tmp_path / "log1.jsonl"
+        log_file1.write_text('{"test": "data1"}')
+
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1, file_path=log_file1)
+        original_id = conv1.id
+        db_session.commit()
+
+        # Verify initial raw log
+        raw_log_repo = RawLogRepository(db_session)
+        raw_logs1 = raw_log_repo.get_by_conversation(conv1.id)
+        assert len(raw_logs1) == 1
+
+        # Update with modified log file (different hash)
+        log_file2 = tmp_path / "log2.jsonl"
+        log_file2.write_text('{"test": "data2", "more": "content"}')
+
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=now,
+                ),
+                ParsedMessage(
+                    role="assistant",
+                    content="Response",
+                    timestamp=now + timedelta(seconds=1),
+                ),
+            ],
+        )
+
+        conv2 = ingest_conversation(
+            db_session, parsed2, file_path=log_file2, update_mode="replace"
+        )
+        db_session.commit()
+
+        # Verify conversation ID preserved
+        assert conv2.id == original_id
+
+        # Verify raw log was replaced (only one raw log should exist)
+        raw_logs2 = raw_log_repo.get_by_conversation(conv2.id)
+        assert len(raw_logs2) == 1
+        assert '{"test": "data2"' in raw_logs2[0].raw_content
+
+    def test_update_mode_append_not_implemented(self, db_session: Session):
+        """Test that append mode raises NotImplementedError."""
+        session_id = "test-session-append"
+        now = datetime.now(UTC)
+
+        # Create initial conversation
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1)
+        db_session.commit()
+
+        # Try to update with append mode
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=session_id,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=now,
+                ),
+                ParsedMessage(
+                    role="assistant",
+                    content="Response",
+                    timestamp=now + timedelta(seconds=1),
+                ),
+            ],
+        )
+
+        # Append mode requires file_path
+        try:
+            ingest_conversation(db_session, parsed2, update_mode="append")
+            assert False, "Expected ValueError"
+        except ValueError as e:
+            assert "append mode requires file_path" in str(e)
+
+    def test_no_session_id_always_creates_new(self, db_session: Session):
+        """Test that conversations without session_id always create new records."""
+        now = datetime.now(UTC)
+
+        # Create first conversation without session_id
+        parsed1 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=None,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test 1",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv1 = ingest_conversation(db_session, parsed1)
+        db_session.commit()
+
+        # Create second conversation without session_id
+        parsed2 = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=now,
+            end_time=None,
+            session_id=None,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test 2",
+                    timestamp=now,
+                )
+            ],
+        )
+
+        conv2 = ingest_conversation(db_session, parsed2, update_mode="replace")
+        db_session.commit()
+
+        # Should create new conversation even with replace mode
+        assert conv2.id != conv1.id
+
+        # Verify both exist
+        conv_repo = ConversationRepository(db_session)
+        all_convs = conv_repo.get_all()
+        assert len(all_convs) >= 2
