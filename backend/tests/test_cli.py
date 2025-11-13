@@ -11,7 +11,8 @@ from typer.testing import CliRunner
 
 from catsyphon.cli import app
 
-runner = CliRunner()
+# Disable Rich formatting in tests using NO_COLOR environment variable
+runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
 
 
 class TestVersionCommand:
