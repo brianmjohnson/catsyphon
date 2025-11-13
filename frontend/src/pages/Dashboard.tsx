@@ -4,10 +4,11 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { formatDistanceToNow } from 'date-fns';
 import { getOverviewStats } from '@/lib/api';
 
 export default function Dashboard() {
-  const { data: stats, isLoading, error } = useQuery({
+  const { data: stats, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['stats', 'overview'],
     queryFn: () => getOverviewStats(),
   });
@@ -41,10 +42,24 @@ export default function Dashboard() {
   return (
     <div className="container mx-auto p-6">
       <div className="mb-8">
-        <h1 className="text-4xl font-bold mb-2">CatSyphon Dashboard</h1>
-        <p className="text-muted-foreground">
-          Overview of conversation logs and coding agent activity
-        </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-4xl font-bold mb-2">CatSyphon Dashboard</h1>
+            <p className="text-muted-foreground">
+              Overview of conversation logs and coding agent activity
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {isFetching && (
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            )}
+            {dataUpdatedAt && (
+              <span className="text-xs text-muted-foreground">
+                Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Overview Metrics Cards */}

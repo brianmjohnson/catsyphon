@@ -4,13 +4,18 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { getConversations, getDevelopers, getProjects } from '@/lib/api';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import type { ConversationFilters } from '@/types/api';
 
 export default function ConversationList() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Track new items for highlighting
+  const [newItemIds, setNewItemIds] = useState<Set<string>>(new Set());
+  const [previousIds, setPreviousIds] = useState<Set<string>>(new Set());
 
   // Parse filters from URL
   const filters: ConversationFilters = {
@@ -31,10 +36,37 @@ export default function ConversationList() {
   };
 
   // Fetch data
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['conversations', filters],
     queryFn: () => getConversations(filters),
   });
+
+  // Detect new items when data changes
+  useEffect(() => {
+    if (data?.items) {
+      const currentIds = new Set(data.items.map((c) => c.id));
+
+      // Find items that are in current but not in previous
+      const newIds = new Set<string>();
+      currentIds.forEach((id) => {
+        if (previousIds.size > 0 && !previousIds.has(id)) {
+          newIds.add(id);
+        }
+      });
+
+      setNewItemIds(newIds);
+      setPreviousIds(currentIds);
+
+      // Clear highlights after 3 seconds
+      if (newIds.size > 0) {
+        const timer = setTimeout(() => {
+          setNewItemIds(new Set());
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   const { data: projects } = useQuery({
     queryKey: ['projects'],
@@ -72,7 +104,45 @@ export default function ConversationList() {
 
   return (
     <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-6">Conversations</h1>
+      {/* Header with freshness indicators */}
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold">Conversations</h1>
+        <div className="flex items-center gap-3">
+          {isFetching && (
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <svg
+                className="w-4 h-4 animate-spin"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              Refreshing...
+            </span>
+          )}
+          {!isFetching && dataUpdatedAt && (
+            <span className="text-sm text-muted-foreground">
+              Last updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}
+            </span>
+          )}
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+            Auto-refresh: 15s
+          </span>
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="bg-card border border-border rounded-lg p-4 mb-6">
@@ -287,7 +357,11 @@ export default function ConversationList() {
                     <tr
                       key={conversation.id}
                       onClick={() => navigate(`/conversations/${conversation.id}`)}
-                      className="border-t border-border hover:bg-accent cursor-pointer transition-colors"
+                      className={`border-t border-border hover:bg-accent cursor-pointer transition-all duration-500 ${
+                        newItemIds.has(conversation.id)
+                          ? 'bg-green-50 dark:bg-green-950/20 animate-pulse'
+                          : ''
+                      }`}
                     >
                       <td className="px-4 py-3 text-sm">
                         {format(new Date(conversation.start_time), 'PPp')}
