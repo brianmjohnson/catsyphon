@@ -188,4 +188,87 @@ describe('ConversationList', () => {
       });
     });
   });
+
+  it('should display success indicators correctly', async () => {
+    vi.mocked(api.getConversations).mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          start_time: '2025-01-01T10:00:00Z',
+          updated_at: '2025-01-01T11:00:00Z',
+          project: { id: 'proj-1', name: 'Test Project' },
+          developer: { id: 'dev-1', username: 'testuser' },
+          agent_type: 'claude-code',
+          status: 'completed',
+          message_count: 10,
+          success: true,
+        },
+        {
+          id: '2',
+          start_time: '2025-01-02T10:00:00Z',
+          updated_at: '2025-01-02T11:00:00Z',
+          project: { id: 'proj-1', name: 'Test Project' },
+          developer: { id: 'dev-2', username: 'otheruser' },
+          agent_type: 'claude-code',
+          status: 'failed',
+          message_count: 5,
+          success: false,
+        },
+        {
+          id: '3',
+          start_time: '2025-01-03T10:00:00Z',
+          updated_at: '2025-01-03T11:00:00Z',
+          project: { id: 'proj-1', name: 'Test Project' },
+          developer: { id: 'dev-3', username: 'thirduser' },
+          agent_type: 'claude-code',
+          status: 'in_progress',
+          message_count: 2,
+          success: null,
+        },
+      ],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    });
+
+    render(<ConversationList />);
+
+    await waitFor(() => {
+      // Success checkmark
+      expect(screen.getByText('✓')).toBeInTheDocument();
+      // Failure X
+      expect(screen.getByText('✗')).toBeInTheDocument();
+      // In progress shows dash
+      expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('should display failed status with correct styling', async () => {
+    vi.mocked(api.getConversations).mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          start_time: '2025-01-01T10:00:00Z',
+          updated_at: '2025-01-01T11:00:00Z',
+          project: { id: 'proj-1', name: 'Test Project' },
+          developer: { id: 'dev-1', username: 'testuser' },
+          agent_type: 'claude-code',
+          status: 'failed',
+          message_count: 10,
+          success: false,
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    });
+
+    render(<ConversationList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('failed')).toBeInTheDocument();
+    });
+  });
 });

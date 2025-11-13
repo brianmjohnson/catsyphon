@@ -249,6 +249,7 @@ class TestStartWatchingFunction:
         with (
             patch("catsyphon.watch.WatcherDaemon") as mock_daemon_class,
             patch("catsyphon.watch.logging.basicConfig") as mock_logging_config,
+            patch("catsyphon.watch.logging.FileHandler") as mock_file_handler,
         ):
             mock_daemon = Mock()
             mock_daemon_class.return_value = mock_daemon
@@ -280,6 +281,9 @@ class TestStartWatchingFunction:
             # Verify logging configured
             mock_logging_config.assert_called_once()
 
+            # Verify FileHandler was created
+            mock_file_handler.assert_called_once()
+
     def test_start_watching_raises_on_nonexistent_directory(self, tmp_path):
         """Test start_watching raises ValueError for non-existent directory."""
         nonexistent = tmp_path / "does_not_exist"
@@ -302,8 +306,14 @@ class TestStartWatchingFunction:
     @patch("catsyphon.watch.settings")
     @patch("catsyphon.watch.WatcherDaemon")
     @patch("catsyphon.watch.logging.basicConfig")
+    @patch("catsyphon.watch.logging.FileHandler")
     def test_start_watching_verbose_mode(
-        self, mock_logging_config, mock_daemon_class, mock_settings, temp_watch_dir
+        self,
+        mock_file_handler,
+        mock_logging_config,
+        mock_daemon_class,
+        mock_settings,
+        temp_watch_dir,
     ):
         """Test start_watching with verbose mode enabled."""
         mock_settings.watch_log_file = "/tmp/watch.log"
@@ -321,10 +331,12 @@ class TestStartWatchingFunction:
     @patch("catsyphon.watch.settings")
     @patch("catsyphon.watch.WatcherDaemon")
     @patch("catsyphon.watch.logging.basicConfig")
+    @patch("catsyphon.watch.logging.FileHandler")
     @patch("catsyphon.watch.logging.getLogger")
     def test_start_watching_suppresses_sqlalchemy_logs(
         self,
         mock_get_logger,
+        mock_file_handler,
         mock_logging_config,
         mock_daemon_class,
         mock_settings,
@@ -347,8 +359,14 @@ class TestStartWatchingFunction:
     @patch("catsyphon.watch.settings")
     @patch("catsyphon.watch.WatcherDaemon")
     @patch("catsyphon.watch.logging.basicConfig")
+    @patch("catsyphon.watch.logging.FileHandler")
     def test_start_watching_with_tagging_enabled(
-        self, mock_logging_config, mock_daemon_class, mock_settings, temp_watch_dir
+        self,
+        mock_file_handler,
+        mock_logging_config,
+        mock_daemon_class,
+        mock_settings,
+        temp_watch_dir,
     ):
         """Test start_watching with LLM tagging enabled."""
         mock_settings.watch_log_file = "/tmp/watch.log"
@@ -370,8 +388,14 @@ class TestStartWatchingFunction:
     @patch("catsyphon.watch.settings")
     @patch("catsyphon.watch.WatcherDaemon")
     @patch("catsyphon.watch.logging.basicConfig")
+    @patch("catsyphon.watch.logging.FileHandler")
     def test_start_watching_with_custom_intervals(
-        self, mock_logging_config, mock_daemon_class, mock_settings, temp_watch_dir
+        self,
+        mock_file_handler,
+        mock_logging_config,
+        mock_daemon_class,
+        mock_settings,
+        temp_watch_dir,
     ):
         """Test start_watching with custom retry and debounce intervals."""
         mock_settings.watch_log_file = "/tmp/watch.log"

@@ -140,6 +140,55 @@ class TestAPIDocs:
         assert spec["info"]["version"] == "0.1.0"
 
 
+class TestReadinessEndpoint:
+    """Tests for readiness probe endpoint."""
+
+    def test_ready_endpoint_returns_200_when_ready(self, client: TestClient):
+        """Test that /ready endpoint returns 200 when system is ready."""
+        from unittest.mock import patch
+
+        with patch(
+            "catsyphon.startup.check_readiness",
+            return_value=(True, {"status": "ready", "database": "connected"}),
+        ):
+            response = client.get("/ready")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "ready"
+            assert data["database"] == "connected"
+
+    def test_ready_endpoint_returns_503_when_not_ready(self, client: TestClient):
+        """Test that /ready endpoint returns 503 when system is not ready."""
+        from unittest.mock import patch
+
+        with patch(
+            "catsyphon.startup.check_readiness",
+            return_value=(False, "Database connection failed"),
+        ):
+            response = client.get("/ready")
+
+            assert response.status_code == 503
+
+    def test_ready_endpoint_includes_details(self, client: TestClient):
+        """Test that /ready endpoint includes system details."""
+        from unittest.mock import patch
+
+        details = {
+            "status": "ready",
+            "database": "connected",
+            "migrations": "up to date",
+        }
+
+        with patch("catsyphon.startup.check_readiness", return_value=(True, details)):
+            response = client.get("/ready")
+            data = response.json()
+
+            assert "status" in data
+            assert "database" in data
+            assert "migrations" in data
+
+
 class TestCORS:
     """Tests for CORS middleware configuration."""
 
