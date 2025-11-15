@@ -237,12 +237,20 @@ class ClaudeCodeParser:
                 last_message_timestamp=None,
             )
 
-        # Match tool calls with results (only for new messages)
-        tool_result_map = match_tool_calls_with_results(raw_messages)
+        # Filter to only user/assistant messages (same as full parse)
+        conversation_messages = [
+            msg
+            for msg in raw_messages
+            if msg.get("type") in ("user", "assistant")
+            and msg.get("message", {}).get("role") in ("user", "assistant")
+        ]
+
+        # Match tool calls with results (only for conversation messages)
+        tool_result_map = match_tool_calls_with_results(conversation_messages)
 
         # Convert to ParsedMessage objects
         parsed_messages = []
-        for msg_data in raw_messages:
+        for msg_data in conversation_messages:
             try:
                 parsed_msg = self._convert_to_parsed_message(msg_data, tool_result_map)
                 if parsed_msg:
@@ -430,11 +438,6 @@ class ClaudeCodeParser:
         message = msg_data.get("message", {})
         role = message.get("role")
         content = message.get("content", "")
-
-        # Validate required fields
-        if not role:
-            logger.warning(f"Message {msg_data.get('uuid')} missing role, skipping")
-            return None
 
         # Extract timestamp
         timestamp_str = msg_data.get("timestamp")
