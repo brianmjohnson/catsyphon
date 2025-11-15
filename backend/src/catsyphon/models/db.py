@@ -461,3 +461,140 @@ class RawLog(Base):
             f"agent_type={self.agent_type!r}, "
             f"log_format={self.log_format!r})>"
         )
+
+
+class WatchConfiguration(Base):
+    """Watch directory configuration for real-time ingestion."""
+
+    __tablename__ = "watch_configurations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    directory: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # Path to watch directory
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
+    )
+    developer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("developers.id"), nullable=True
+    )
+    enable_tagging: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )  # Currently being watched
+
+    # Statistics snapshot (from WatcherStats)
+    stats: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )  # files_processed, files_skipped, etc.
+
+    # Configuration options (poll_interval, retry settings, etc.)
+    extra_config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )  # Username who created this config
+    last_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_stopped_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    project: Mapped[Optional["Project"]] = relationship()
+    developer: Mapped[Optional["Developer"]] = relationship()
+    ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(
+        back_populates="watch_config", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<WatchConfiguration(id={self.id}, "
+            f"directory={self.directory!r}, "
+            f"is_active={self.is_active})>"
+        )
+
+
+class IngestionJob(Base):
+    """Audit trail for all ingestion operations."""
+
+    __tablename__ = "ingestion_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'watch', 'upload', 'cli'
+    source_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("watch_configurations.id"),
+        nullable=True,
+    )  # FK to watch_configurations if source_type='watch'
+
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_log_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("raw_logs.id"), nullable=True
+    )
+    conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'success', 'failed', 'duplicate', 'skipped'
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Performance metrics
+    processing_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    incremental: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )  # Was incremental parsing used?
+    messages_added: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )  # Username (for manual uploads)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    watch_config: Mapped[Optional["WatchConfiguration"]] = relationship(
+        back_populates="ingestion_jobs"
+    )
+    raw_log: Mapped[Optional["RawLog"]] = relationship()
+    conversation: Mapped[Optional["Conversation"]] = relationship()
+
+    def __repr__(self) -> str:
+        return (
+            f"<IngestionJob(id={self.id}, "
+            f"source_type={self.source_type!r}, "
+            f"status={self.status!r})>"
+        )

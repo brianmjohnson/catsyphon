@@ -8,16 +8,20 @@ from catsyphon.db.repositories.base import BaseRepository
 from catsyphon.db.repositories.conversation import ConversationRepository
 from catsyphon.db.repositories.developer import DeveloperRepository
 from catsyphon.db.repositories.epoch import EpochRepository
+from catsyphon.db.repositories.ingestion_job import IngestionJobRepository
 from catsyphon.db.repositories.message import MessageRepository
 from catsyphon.db.repositories.project import ProjectRepository
 from catsyphon.db.repositories.raw_log import RawLogRepository
+from catsyphon.db.repositories.watch_config import WatchConfigurationRepository
 
 __all__ = [
     "BaseRepository",
     "ConversationRepository",
     "DeveloperRepository",
     "EpochRepository",
+    "IngestionJobRepository",
     "MessageRepository",
     "ProjectRepository",
     "RawLogRepository",
+    "WatchConfigurationRepository",
 ]

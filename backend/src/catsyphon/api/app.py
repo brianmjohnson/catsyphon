@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from catsyphon.api.routes import conversations, metadata, stats, upload
+from catsyphon.api.routes import conversations, ingestion, metadata, stats, upload, watch
 from catsyphon.startup import run_all_startup_checks
 
 
@@ -100,3 +100,5 @@ app.include_router(
 app.include_router(metadata.router, prefix="", tags=["metadata"])
 app.include_router(stats.router, prefix="/stats", tags=["stats"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
+app.include_router(watch.router, prefix="", tags=["watch"])
+app.include_router(ingestion.router, prefix="", tags=["ingestion"])

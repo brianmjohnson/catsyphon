@@ -2,6 +2,6 @@
 API routes for CatSyphon.
 """
 
-from catsyphon.api.routes import conversations, metadata, stats
+from catsyphon.api.routes import conversations, ingestion, metadata, stats, upload, watch
 
-__all__ = ["conversations", "metadata", "stats"]
+__all__ = ["conversations", "ingestion", "metadata", "stats", "upload", "watch"]

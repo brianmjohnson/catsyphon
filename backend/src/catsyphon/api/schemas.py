@@ -250,3 +250,96 @@ class UploadResponse(BaseModel):
     success_count: int
     failed_count: int
     results: list[UploadResult]
+
+
+# ===== Watch Configuration Schemas =====
+
+
+class WatchConfigurationCreate(BaseModel):
+    """Request schema for creating a watch configuration."""
+
+    directory: str
+    project_id: Optional[UUID] = None
+    developer_id: Optional[UUID] = None
+    enable_tagging: bool = False
+    extra_config: dict[str, Any] = Field(default_factory=dict)
+    created_by: Optional[str] = None
+
+
+class WatchConfigurationUpdate(BaseModel):
+    """Request schema for updating a watch configuration."""
+
+    directory: Optional[str] = None
+    project_id: Optional[UUID] = None
+    developer_id: Optional[UUID] = None
+    enable_tagging: Optional[bool] = None
+    extra_config: Optional[dict[str, Any]] = None
+
+
+class WatchConfigurationResponse(BaseModel):
+    """Response schema for watch configuration."""
+
+    id: UUID
+    directory: str
+    project_id: Optional[UUID] = None
+    developer_id: Optional[UUID] = None
+    enable_tagging: bool
+    is_active: bool
+    stats: dict[str, Any]
+    extra_config: dict[str, Any]
+    created_by: Optional[str] = None
+    last_started_at: Optional[datetime] = None
+    last_stopped_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+#===== Ingestion Job Schemas =====
+
+
+class IngestionJobResponse(BaseModel):
+    """Response schema for ingestion job."""
+
+    id: UUID
+    source_type: str
+    source_config_id: Optional[UUID] = None
+    file_path: Optional[str] = None
+    raw_log_id: Optional[UUID] = None
+    conversation_id: Optional[UUID] = None
+    status: str
+    error_message: Optional[str] = None
+    processing_time_ms: Optional[int] = None
+    incremental: bool
+    messages_added: int
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class IngestionJobFilters(BaseModel):
+    """Query parameters for filtering ingestion jobs."""
+
+    source_type: Optional[str] = None
+    status: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=50, ge=1, le=100)
+
+
+class IngestionStatsResponse(BaseModel):
+    """Response schema for ingestion statistics."""
+
+    total_jobs: int
+    by_status: dict[str, int]
+    by_source_type: dict[str, int]
+    avg_processing_time_ms: Optional[float] = None
+    incremental_jobs: int
+    incremental_percentage: float
