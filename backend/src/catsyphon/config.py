@@ -60,8 +60,6 @@ class Settings(BaseSettings):
         300  # Retry failed files every N seconds (default: 5 minutes)
     )
     watch_max_retries: int = 3  # Maximum number of retry attempts before giving up
-    watch_pid_file: str = "/tmp/catsyphon_watch.pid"  # Daemon PID file location
-    watch_log_file: str = "/tmp/catsyphon_watch.log"  # Daemon log file location
     watch_debounce_seconds: float = 1.0  # Wait time after file event before processing
 
     # Application

@@ -4,6 +4,7 @@ CatSyphon FastAPI Application.
 Main API application for querying conversation data and insights.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,7 +18,10 @@ from catsyphon.api.routes import (
     upload,
     watch,
 )
+from catsyphon.daemon_manager import DaemonManager
 from catsyphon.startup import run_all_startup_checks
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -27,13 +31,42 @@ async def lifespan(app: FastAPI):
 
     Runs startup checks before the application starts serving requests.
     Ensures critical dependencies (database, migrations) are available.
+    Initializes and manages watch daemons.
     """
     # Startup: Run all dependency checks
+    logger.info("Running startup checks...")
     run_all_startup_checks()
+    logger.info("✓ Startup checks passed")
+
+    # Initialize DaemonManager
+    logger.info("Initializing DaemonManager...")
+    daemon_manager = DaemonManager(stats_sync_interval=30)
+    app.state.daemon_manager = daemon_manager
+
+    # Start background threads
+    daemon_manager.start()
+    logger.info("✓ DaemonManager started")
+
+    # Load and start active watch configurations
+    try:
+        daemon_manager.load_active_configs()
+        logger.info("✓ Active watch configurations loaded")
+    except Exception as e:
+        logger.error(f"Failed to load active configs: {e}", exc_info=True)
+
+    logger.info("Application startup complete")
 
     yield
 
-    # Shutdown: Cleanup if needed (currently none)
+    # Shutdown: Stop all daemons and cleanup
+    logger.info("Application shutdown initiated...")
+    try:
+        daemon_manager.shutdown(timeout=10)
+        logger.info("✓ DaemonManager shutdown complete")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+    logger.info("Application shutdown complete")
 
 
 app = FastAPI(

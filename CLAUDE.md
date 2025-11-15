@@ -150,11 +150,13 @@ uv run uvicorn catsyphon.api.app:app --reload   # Dev server with hot reload
 # CLI commands
 uv run catsyphon ingest <path> --project "name"              # One-time log import
 uv run catsyphon ingest <path> --enable-tagging              # Import with LLM tagging
-uv run catsyphon watch <path> --project "name"               # Live directory watching
-uv run catsyphon watch <path> --enable-tagging               # Watch with LLM tagging
-uv run catsyphon watch <path> --verbose                      # With SQL query logs
 uv run catsyphon db-status                                   # Database health check
 uv run catsyphon version                                     # Show version
+
+# Watch directories (via Web UI or API)
+# Navigate to http://localhost:8000 → Ingestion → Watch Directories
+# Click "Add Directory" to configure automatic monitoring
+# Daemons start/stop via UI buttons or POST /watch/configs/{id}/start endpoint
 
 # Testing & quality
 python3 -m pytest                                # Run all tests (more stable than uv)

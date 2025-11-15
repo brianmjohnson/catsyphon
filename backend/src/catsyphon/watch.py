@@ -489,31 +489,41 @@ class WatcherDaemon:
         # Retry thread
         self.retry_thread: Optional[Thread] = None
 
-    def start(self) -> None:
-        """Start the watch daemon."""
+    def start(self, blocking: bool = True) -> None:
+        """
+        Start the watch daemon.
+
+        Args:
+            blocking: If True, blocks until shutdown. If False, returns immediately.
+        """
         logger.info(f"Starting watch daemon for directory: {self.directory}")
         logger.info(f"Project: {self.project_name or 'default'}")
         logger.info(f"Developer: {self.developer_username or 'default'}")
 
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Setup signal handlers only in blocking mode
+        # (DaemonManager handles signals when running multiple daemons)
+        if blocking:
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
 
         # Start watchdog observer
         self.observer.start()
         logger.info("✓ Observer started")
 
-        # Start retry thread
-        self.retry_thread = Thread(target=self._retry_loop, daemon=True)
+        # Start retry thread (not daemon - we want clean shutdown)
+        self.retry_thread = Thread(target=self._retry_loop, daemon=False)
         self.retry_thread.start()
         logger.info("✓ Retry thread started")
 
-        # Main loop - just wait for shutdown
-        try:
-            while not self.shutdown_event.is_set():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.stop()
+        # Main loop - only block if requested
+        if blocking:
+            try:
+                while not self.shutdown_event.is_set():
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                self.stop()
+        else:
+            logger.info("Daemon started in non-blocking mode")
 
     def stop(self) -> None:
         """Stop the watch daemon gracefully."""
@@ -525,7 +535,42 @@ class WatcherDaemon:
         self.observer.join(timeout=5)
         logger.info("✓ Observer stopped")
 
+        # Wait for retry thread to finish
+        if self.retry_thread and self.retry_thread.is_alive():
+            self.retry_thread.join(timeout=5)
+            logger.info("✓ Retry thread stopped")
+
         logger.info("✓ Watch daemon stopped")
+
+    def is_running(self) -> bool:
+        """
+        Check if daemon is running.
+
+        Returns:
+            True if observer is running, False otherwise
+        """
+        return self.observer.is_alive() if self.observer else False
+
+    def get_stats_snapshot(self) -> dict:
+        """
+        Get current statistics snapshot.
+
+        Returns:
+            Dictionary with current stats
+        """
+        return {
+            "started_at": self.stats.started_at.isoformat(),
+            "files_processed": self.stats.files_processed,
+            "files_skipped": self.stats.files_skipped,
+            "files_failed": self.stats.files_failed,
+            "files_retried": self.stats.files_retried,
+            "last_activity": (
+                self.stats.last_activity.isoformat()
+                if self.stats.last_activity
+                else None
+            ),
+            "retry_queue_size": len(self.retry_queue),
+        }
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
@@ -561,68 +606,3 @@ class WatcherDaemon:
             except Exception as e:
                 logger.error(f"Error in retry loop: {e}", exc_info=True)
                 self.shutdown_event.wait(timeout=60)  # Wait a minute before retrying
-
-
-def start_watching(
-    directory: Path,
-    project_name: Optional[str] = None,
-    developer_username: Optional[str] = None,
-    poll_interval: int = 2,
-    retry_interval: int = 300,
-    max_retries: int = 3,
-    debounce_seconds: float = 1.0,
-    verbose: bool = False,
-    enable_tagging: bool = False,
-    config_id: Optional[UUID] = None,
-) -> None:
-    """
-    Start watching a directory for new conversation logs.
-
-    Args:
-        directory: Directory to watch
-        project_name: Project name to assign to conversations
-        developer_username: Developer username to assign to conversations
-        poll_interval: File system polling interval in seconds
-        retry_interval: Retry failed files every N seconds
-        max_retries: Maximum number of retry attempts
-        debounce_seconds: Wait time after file event before processing
-        verbose: Enable verbose logging (includes SQL queries)
-        enable_tagging: Enable LLM-based tagging (uses OpenAI API)
-        config_id: Watch configuration UUID for tracking (optional)
-    """
-    # Validate directory
-    if not directory.exists():
-        raise ValueError(f"Directory does not exist: {directory}")
-
-    if not directory.is_dir():
-        raise ValueError(f"Path is not a directory: {directory}")
-
-    # Setup logging
-    log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="[%(asctime)s] %(levelname)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(settings.watch_log_file),
-        ],
-    )
-
-    # Suppress SQLAlchemy query logs unless in verbose mode
-    if not verbose:
-        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-
-    # Create and start daemon
-    daemon = WatcherDaemon(
-        directory=directory,
-        project_name=project_name,
-        developer_username=developer_username,
-        poll_interval=poll_interval,
-        retry_interval=retry_interval,
-        max_retries=max_retries,
-        debounce_seconds=debounce_seconds,
-        enable_tagging=enable_tagging,
-        config_id=config_id,
-    )
-
-    daemon.start()

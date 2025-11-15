@@ -4,9 +4,10 @@ Watch configuration API routes.
 Endpoints for managing watch directory configurations.
 """
 
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from catsyphon.api.schemas import (
@@ -14,9 +15,11 @@ from catsyphon.api.schemas import (
     WatchConfigurationResponse,
     WatchConfigurationUpdate,
 )
+from catsyphon.daemon_manager import DaemonManager
 from catsyphon.db.connection import get_db
 from catsyphon.db.repositories import WatchConfigurationRepository
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -189,28 +192,63 @@ async def delete_watch_config(
 )
 async def start_watching(
     config_id: UUID,
+    request: Request,
     session: Session = Depends(get_db),
 ) -> WatchConfigurationResponse:
     """
-    Activate a watch configuration (start watching).
+    Activate a watch configuration and start the daemon.
 
     Args:
         config_id: Configuration UUID
+        request: FastAPI request (for accessing app state)
+        session: Database session
 
     Returns:
         Updated watch configuration
 
     Raises:
         HTTPException: 404 if configuration not found
+        HTTPException: 400 if daemon fails to start
     """
     repo = WatchConfigurationRepository(session)
 
-    updated_config = repo.activate(config_id)
-
-    if not updated_config:
+    # Get configuration
+    config = repo.get(config_id)
+    if not config:
         raise HTTPException(status_code=404, detail="Watch configuration not found")
 
+    # Check if already active
+    if config.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Watch configuration is already active",
+        )
+
+    # Mark as active in database
+    updated_config = repo.activate(config_id)
     session.commit()
+
+    # Get DaemonManager from app state
+    daemon_manager: DaemonManager = request.app.state.daemon_manager
+
+    # Start the daemon
+    try:
+        daemon_manager.start_daemon(updated_config)
+        logger.info(f"Started daemon for config {config_id}")
+    except Exception as e:
+        logger.error(f"Failed to start daemon for config {config_id}: {e}", exc_info=True)
+
+        # Rollback - mark as inactive
+        try:
+            repo.deactivate(config_id)
+            session.commit()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to start daemon: {str(e)}",
+        )
 
     return WatchConfigurationResponse.model_validate(updated_config)
 
@@ -220,27 +258,51 @@ async def start_watching(
 )
 async def stop_watching(
     config_id: UUID,
+    request: Request,
     session: Session = Depends(get_db),
 ) -> WatchConfigurationResponse:
     """
-    Deactivate a watch configuration (stop watching).
+    Deactivate a watch configuration and stop the daemon.
 
     Args:
         config_id: Configuration UUID
+        request: FastAPI request (for accessing app state)
+        session: Database session
 
     Returns:
         Updated watch configuration
 
     Raises:
         HTTPException: 404 if configuration not found
+        HTTPException: 400 if daemon not running
     """
     repo = WatchConfigurationRepository(session)
 
-    updated_config = repo.deactivate(config_id)
-
-    if not updated_config:
+    # Get configuration
+    config = repo.get(config_id)
+    if not config:
         raise HTTPException(status_code=404, detail="Watch configuration not found")
 
+    # Check if active
+    if not config.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Watch configuration is not active",
+        )
+
+    # Get DaemonManager from app state
+    daemon_manager: DaemonManager = request.app.state.daemon_manager
+
+    # Stop the daemon
+    try:
+        daemon_manager.stop_daemon(config_id, save_stats=True)
+        logger.info(f"Stopped daemon for config {config_id}")
+    except Exception as e:
+        logger.error(f"Failed to stop daemon for config {config_id}: {e}", exc_info=True)
+        # Continue anyway - mark as inactive in DB
+
+    # Mark as inactive in database
+    updated_config = repo.deactivate(config_id)
     session.commit()
 
     return WatchConfigurationResponse.model_validate(updated_config)
@@ -248,24 +310,76 @@ async def stop_watching(
 
 @router.get("/watch/status")
 async def get_watch_status(
+    request: Request,
     session: Session = Depends(get_db),
-) -> dict[str, int | list[WatchConfigurationResponse]]:
+) -> dict:
     """
     Get overall watch daemon status.
 
     Returns:
-        Dictionary with watch status information
+        Dictionary with watch status information including runtime daemon status
     """
     repo = WatchConfigurationRepository(session)
 
     active_configs = repo.get_all_active()
     inactive_configs = repo.get_all_inactive()
 
+    # Get DaemonManager from app state
+    daemon_manager: DaemonManager = request.app.state.daemon_manager
+
+    # Get runtime status
+    daemon_status = daemon_manager.get_all_status()
+
     return {
         "total_configs": repo.count(),
         "active_count": len(active_configs),
         "inactive_count": len(inactive_configs),
+        "running_daemons": daemon_status["running_daemons"],
+        "total_daemons": daemon_status["total_daemons"],
         "active_configs": [
             WatchConfigurationResponse.model_validate(c) for c in active_configs
         ],
     }
+
+
+@router.get("/watch/daemon/status")
+async def get_all_daemon_status(
+    request: Request,
+) -> dict:
+    """
+    Get detailed runtime status for all daemons.
+
+    Returns:
+        Dictionary with detailed daemon status, stats, and health
+    """
+    daemon_manager: DaemonManager = request.app.state.daemon_manager
+    return daemon_manager.get_all_status()
+
+
+@router.get("/watch/daemon/status/{config_id}")
+async def get_daemon_status(
+    config_id: UUID,
+    request: Request,
+) -> dict:
+    """
+    Get detailed runtime status for a specific daemon.
+
+    Args:
+        config_id: Watch configuration ID
+
+    Returns:
+        Daemon status dictionary
+
+    Raises:
+        HTTPException: 404 if daemon not running
+    """
+    daemon_manager: DaemonManager = request.app.state.daemon_manager
+    status = daemon_manager.get_daemon_status(config_id)
+
+    if not status:
+        raise HTTPException(
+            status_code=404,
+            detail="No daemon running for this configuration",
+        )
+
+    return status
