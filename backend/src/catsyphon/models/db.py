@@ -111,7 +111,7 @@ class Conversation(Base):
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default="open"
     )  # 'open', 'completed', 'abandoned'
-    success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, index=True)
     iteration_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
     )
@@ -141,6 +141,7 @@ class Conversation(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+        index=True,
     )
 
     # Relationships
@@ -414,14 +415,14 @@ class RawLog(Base):
         nullable=False,
     )
 
-    agent_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     log_format: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # 'json', 'markdown', 'xml', etc.
     raw_content: Mapped[str] = mapped_column(Text, nullable=False)
-    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
     file_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True
+        String(64), nullable=False, unique=True, index=True
     )  # SHA-256 hash for deduplication
 
     # Incremental parsing state (Phase 2)
@@ -472,7 +473,7 @@ class WatchConfiguration(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     directory: Mapped[str] = mapped_column(
-        Text, nullable=False
+        Text, nullable=False, index=True
     )  # Path to watch directory
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
@@ -484,7 +485,7 @@ class WatchConfiguration(Base):
         Boolean, nullable=False, server_default="false"
     )
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false"
+        Boolean, nullable=False, server_default="false", index=True
     )  # Currently being watched
 
     # Statistics snapshot (from WatcherStats)
@@ -541,7 +542,7 @@ class IngestionJob(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     source_type: Mapped[str] = mapped_column(
-        String(50), nullable=False
+        String(50), nullable=False, index=True
     )  # 'watch', 'upload', 'cli'
     source_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -558,7 +559,7 @@ class IngestionJob(Base):
     )
 
     status: Mapped[str] = mapped_column(
-        String(50), nullable=False
+        String(50), nullable=False, index=True
     )  # 'success', 'failed', 'duplicate', 'skipped'
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -572,7 +573,7 @@ class IngestionJob(Base):
     )
 
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        DateTime(timezone=True), nullable=False, index=True
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
