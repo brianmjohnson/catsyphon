@@ -7,8 +7,11 @@ files touched, and raw logs.
 """
 
 import logging
+import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +19,7 @@ from catsyphon.db.repositories import (
     ConversationRepository,
     DeveloperRepository,
     EpochRepository,
+    IngestionJobRepository,
     MessageRepository,
     ProjectRepository,
     RawLogRepository,
@@ -35,9 +39,12 @@ def ingest_conversation(
     project_name: Optional[str] = None,
     developer_username: Optional[str] = None,
     file_path: Optional[Path] = None,
-    tags: Optional[dict] = None,
+    tags: Optional[dict[str, Any]] = None,
     skip_duplicates: bool = True,
     update_mode: str = "skip",
+    source_type: str = "cli",
+    source_config_id: Optional[UUID] = None,
+    created_by: Optional[str] = None,
 ) -> Conversation:
     """
     Ingest a parsed conversation into the database.
@@ -55,6 +62,9 @@ def ingest_conversation(
             - "skip": Return existing without changes (default)
             - "replace": Delete children and recreate with new data (full reparse)
             - "append": Reserved for future incremental updates
+        source_type: Source of ingestion ('cli', 'upload', 'watch')
+        source_config_id: UUID of watch configuration if source_type='watch'
+        created_by: Username who triggered the ingestion (for 'upload')
 
     Returns:
         Created or updated Conversation instance with all relationships loaded
@@ -84,6 +94,27 @@ def ingest_conversation(
     """
     logger.info(f"Starting ingestion: {len(parsed.messages)} messages")
 
+    # Initialize timing for ingestion job tracking
+    start_time = datetime.utcnow()
+    start_ms = time.time() * 1000  # Convert to milliseconds
+
+    # Initialize ingestion job repository
+    ingestion_repo = IngestionJobRepository(session)
+
+    # Create initial ingestion job record
+    ingestion_job = ingestion_repo.create(
+        source_type=source_type,
+        source_config_id=source_config_id,
+        file_path=str(file_path) if file_path else None,
+        status="processing",
+        started_at=start_time,
+        created_by=created_by,
+        incremental=False,  # Will update if incremental path taken
+        messages_added=0,
+    )
+    session.flush()  # Get job ID
+    logger.debug(f"Created ingestion job: {ingestion_job.id}")
+
     # Check for duplicate files before processing
     if file_path:
         raw_log_repo = RawLogRepository(session)
@@ -97,9 +128,26 @@ def ingest_conversation(
                 # Get existing conversation for this file
                 existing_raw_log = raw_log_repo.get_by_file_hash(file_hash)
                 if existing_raw_log:
+                    # Update ingestion job as duplicate
+                    elapsed_ms = int((time.time() * 1000) - start_ms)
+                    ingestion_job.status = "duplicate"
+                    ingestion_job.raw_log_id = existing_raw_log.id
+                    ingestion_job.conversation_id = existing_raw_log.conversation_id
+                    ingestion_job.processing_time_ms = elapsed_ms
+                    ingestion_job.completed_at = datetime.utcnow()
+                    session.flush()
+                    logger.debug(f"Updated ingestion job to duplicate: {ingestion_job.id}")
+
                     session.refresh(existing_raw_log.conversation)
                     return existing_raw_log.conversation
             else:
+                # Update ingestion job as failed
+                elapsed_ms = int((time.time() * 1000) - start_ms)
+                ingestion_job.status = "failed"
+                ingestion_job.error_message = f"Duplicate file (hash: {file_hash[:8]}...)"
+                ingestion_job.processing_time_ms = elapsed_ms
+                ingestion_job.completed_at = datetime.utcnow()
+                session.flush()
                 raise DuplicateFileError(file_hash, str(file_path))
 
     # Initialize repositories
@@ -119,6 +167,15 @@ def ingest_conversation(
                     f"Skipping existing conversation: session_id={parsed.session_id}, "
                     f"conversation_id={existing_conversation.id}"
                 )
+                # Update ingestion job as skipped
+                elapsed_ms = int((time.time() * 1000) - start_ms)
+                ingestion_job.status = "skipped"
+                ingestion_job.conversation_id = existing_conversation.id
+                ingestion_job.processing_time_ms = elapsed_ms
+                ingestion_job.completed_at = datetime.utcnow()
+                session.flush()
+                logger.debug(f"Updated ingestion job to skipped: {ingestion_job.id}")
+
                 session.refresh(existing_conversation)
                 return existing_conversation
 
@@ -198,13 +255,31 @@ def ingest_conversation(
                     is_update = False
                 else:
                     # Perform incremental append
-                    return _append_messages_incremental(
+                    updated_conversation = _append_messages_incremental(
                         session=session,
                         existing_conversation=existing_conversation,
                         existing_raw_log=existing_raw_log,
                         parsed=parsed,
                         tags=tags,
                     )
+
+                    # Update ingestion job as successful incremental
+                    elapsed_ms = int((time.time() * 1000) - start_ms)
+                    messages_added = len(parsed.messages) - existing_conversation.message_count
+                    ingestion_job.status = "success"
+                    ingestion_job.conversation_id = updated_conversation.id
+                    ingestion_job.raw_log_id = existing_raw_log.id
+                    ingestion_job.processing_time_ms = elapsed_ms
+                    ingestion_job.messages_added = messages_added
+                    ingestion_job.incremental = True  # Incremental append
+                    ingestion_job.completed_at = datetime.utcnow()
+                    session.flush()
+                    logger.debug(
+                        f"Updated ingestion job to success (incremental): {ingestion_job.id}, "
+                        f"messages_added={messages_added}, processing_time={elapsed_ms}ms"
+                    )
+
+                    return updated_conversation
 
     # Initialize remaining repositories
     project_repo = ProjectRepository(session)
@@ -251,6 +326,7 @@ def ingest_conversation(
         logger.info(f"Created conversation: {conversation.id}")
     else:
         # Update existing conversation with project/developer associations
+        assert conversation is not None, "conversation must be set in replace mode"
         conversation.project_id = project_id
         conversation.developer_id = developer_id
         logger.info(f"Updated conversation associations: {conversation.id}")
@@ -298,7 +374,7 @@ def ingest_conversation(
         ]
 
         # Add model and token_usage to extra_data
-        extra_data = {}
+        extra_data: dict[str, Any] = {}
         if msg.model:
             extra_data["model"] = msg.model
         if msg.token_usage:
@@ -352,6 +428,7 @@ def ingest_conversation(
         logger.debug(f"Created {len(parsed.code_changes)} code change file records")
 
     # Step 8: Store raw log (if file path provided)
+    raw_log = None
     if file_path:
         raw_log = raw_log_repo.create_from_file(
             conversation_id=conversation.id,
@@ -377,6 +454,21 @@ def ingest_conversation(
     # Refresh conversation to load relationships
     session.refresh(conversation)
 
+    # Update ingestion job as successful
+    elapsed_ms = int((time.time() * 1000) - start_ms)
+    ingestion_job.status = "success"
+    ingestion_job.conversation_id = conversation.id
+    ingestion_job.raw_log_id = raw_log.id if raw_log else None
+    ingestion_job.processing_time_ms = elapsed_ms
+    ingestion_job.messages_added = len(messages)
+    ingestion_job.incremental = False  # Full parse (not incremental)
+    ingestion_job.completed_at = datetime.utcnow()
+    session.flush()
+    logger.debug(
+        f"Updated ingestion job to success: {ingestion_job.id}, "
+        f"processing_time={elapsed_ms}ms"
+    )
+
     total_files = len(parsed.files_touched) + len(parsed.code_changes)
     logger.info(
         f"Ingestion complete: conversation={conversation.id}, "
@@ -391,7 +483,7 @@ def _append_messages_incremental(
     existing_conversation: Conversation,
     existing_raw_log: RawLog,
     parsed: ParsedConversation,
-    tags: Optional[dict] = None,
+    tags: Optional[dict[str, Any]] = None,
 ) -> Conversation:
     """
     Append only NEW messages to existing conversation (incremental update).
@@ -505,7 +597,7 @@ def _append_messages_incremental(
         ]
 
         # Add model and token_usage to extra_data
-        extra_data = {}
+        extra_data: dict[str, Any] = {}
         if msg.model:
             extra_data["model"] = msg.model
         if msg.token_usage:
@@ -612,7 +704,10 @@ def ingest_messages_incremental(
     incremental_result: IncrementalParseResult,
     conversation_id: str,
     raw_log_id: str,
-    tags: Optional[dict] = None,
+    tags: Optional[dict[str, Any]] = None,
+    source_type: str = "watch",
+    source_config_id: Optional[UUID] = None,
+    created_by: Optional[str] = None,
 ) -> Conversation:
     """
     Ingest only NEW messages from incremental parsing (Phase 2).
@@ -626,6 +721,9 @@ def ingest_messages_incremental(
         conversation_id: UUID of existing conversation
         raw_log_id: UUID of existing raw_log
         tags: Optional tags for new messages
+        source_type: Source of ingestion ('cli', 'upload', 'watch')
+        source_config_id: UUID of watch configuration if source_type='watch'
+        created_by: Username who triggered the ingestion
 
     Returns:
         Updated conversation instance
@@ -652,6 +750,27 @@ def ingest_messages_incremental(
         f"Incremental ingest: conversation={conversation_id}, "
         f"new_messages={len(incremental_result.new_messages)}"
     )
+
+    # Initialize timing for ingestion job tracking
+    start_time = datetime.utcnow()
+    start_ms = time.time() * 1000  # Convert to milliseconds
+
+    # Initialize ingestion job repository
+    ingestion_repo = IngestionJobRepository(session)
+
+    # Create initial ingestion job record
+    ingestion_job = ingestion_repo.create(
+        source_type=source_type,
+        source_config_id=source_config_id,
+        file_path=None,  # Not provided in incremental mode
+        status="processing",
+        started_at=start_time,
+        created_by=created_by,
+        incremental=True,
+        messages_added=0,
+    )
+    session.flush()  # Get job ID
+    logger.debug(f"Created ingestion job (incremental): {ingestion_job.id}")
 
     # Get existing conversation and raw_log
     conversation_repo = ConversationRepository(session)
@@ -719,7 +838,7 @@ def ingest_messages_incremental(
             for cc in msg.code_changes
         ]
 
-        extra_data = {}
+        extra_data: dict[str, Any] = {}
         if msg.model:
             extra_data["model"] = msg.model
         if msg.token_usage:
@@ -789,6 +908,21 @@ def ingest_messages_incremental(
     # Flush and refresh
     session.flush()
     session.refresh(conversation)
+
+    # Update ingestion job as successful
+    elapsed_ms = int((time.time() * 1000) - start_ms)
+    ingestion_job.status = "success"
+    ingestion_job.conversation_id = conversation.id
+    ingestion_job.raw_log_id = uuid.UUID(raw_log_id)
+    ingestion_job.processing_time_ms = elapsed_ms
+    ingestion_job.messages_added = len(incremental_result.new_messages)
+    ingestion_job.completed_at = datetime.utcnow()
+    session.flush()
+    logger.debug(
+        f"Updated ingestion job to success: {ingestion_job.id}, "
+        f"messages_added={len(incremental_result.new_messages)}, "
+        f"processing_time={elapsed_ms}ms"
+    )
 
     logger.info(
         f"Incremental ingest complete: conversation={conversation.id}, "

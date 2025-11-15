@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
 from typing import TYPE_CHECKING, Any, Optional, Set
+from uuid import UUID
 
 if TYPE_CHECKING:
     from catsyphon.tagging.pipeline import TaggingPipeline
@@ -148,6 +149,7 @@ class FileWatcher(FileSystemEventHandler):
         stats: Optional[WatcherStats] = None,
         debounce_seconds: float = 1.0,
         tagging_pipeline: Optional["TaggingPipeline"] = None,
+        config_id: Optional[UUID] = None,
     ):
         super().__init__()
         self.project_name = project_name
@@ -156,6 +158,7 @@ class FileWatcher(FileSystemEventHandler):
         self.stats = stats or WatcherStats()
         self.debounce_seconds = debounce_seconds
         self.tagging_pipeline = tagging_pipeline
+        self.config_id = config_id  # Watch configuration ID for tracking
 
         # Track files being processed to avoid duplicate events
         self.processing: Set[str] = set()
@@ -323,6 +326,9 @@ class FileWatcher(FileSystemEventHandler):
                         tags=tags,
                         skip_duplicates=True,
                         update_mode=update_mode,
+                        source_type="watch",
+                        source_config_id=self.config_id,
+                        created_by=None,  # System-triggered
                     )
 
                     logger.info(
@@ -403,6 +409,9 @@ class FileWatcher(FileSystemEventHandler):
             conversation_id=str(existing_raw_log.conversation_id),
             raw_log_id=str(existing_raw_log.id),
             tags=None,  # TODO: Support tagging for incremental updates
+            source_type="watch",
+            source_config_id=self.config_id,
+            created_by=None,  # System-triggered
         )
 
         logger.info(
@@ -428,6 +437,7 @@ class WatcherDaemon:
         max_retries: int = 3,
         debounce_seconds: float = 1.0,
         enable_tagging: bool = False,
+        config_id: Optional[UUID] = None,
     ):
         self.directory = directory
         self.project_name = project_name
@@ -436,6 +446,7 @@ class WatcherDaemon:
         self.retry_interval = retry_interval
         self.debounce_seconds = debounce_seconds
         self.enable_tagging = enable_tagging
+        self.config_id = config_id
 
         # Initialize tagging pipeline if enabled
         tagging_pipeline = None
@@ -465,6 +476,7 @@ class WatcherDaemon:
             stats=self.stats,
             debounce_seconds=debounce_seconds,
             tagging_pipeline=tagging_pipeline,
+            config_id=config_id,
         )
 
         # Watchdog observer
@@ -561,6 +573,7 @@ def start_watching(
     debounce_seconds: float = 1.0,
     verbose: bool = False,
     enable_tagging: bool = False,
+    config_id: Optional[UUID] = None,
 ) -> None:
     """
     Start watching a directory for new conversation logs.
@@ -575,6 +588,7 @@ def start_watching(
         debounce_seconds: Wait time after file event before processing
         verbose: Enable verbose logging (includes SQL queries)
         enable_tagging: Enable LLM-based tagging (uses OpenAI API)
+        config_id: Watch configuration UUID for tracking (optional)
     """
     # Validate directory
     if not directory.exists():
@@ -608,6 +622,7 @@ def start_watching(
         max_retries=max_retries,
         debounce_seconds=debounce_seconds,
         enable_tagging=enable_tagging,
+        config_id=config_id,
     )
 
     daemon.start()
