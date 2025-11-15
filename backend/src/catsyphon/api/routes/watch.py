@@ -4,7 +4,6 @@ Watch configuration API routes.
 Endpoints for managing watch directory configurations.
 """
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -71,7 +70,9 @@ async def get_watch_config(
     return WatchConfigurationResponse.model_validate(config)
 
 
-@router.post("/watch/configs", response_model=WatchConfigurationResponse, status_code=201)
+@router.post(
+    "/watch/configs", response_model=WatchConfigurationResponse, status_code=201
+)
 async def create_watch_config(
     config: WatchConfigurationCreate,
     session: Session = Depends(get_db),
@@ -95,7 +96,10 @@ async def create_watch_config(
     if existing:
         raise HTTPException(
             status_code=400,
-            detail=f"Watch configuration already exists for directory: {config.directory}",
+            detail=(
+                f"Watch configuration already exists for directory: "
+                f"{config.directory}"
+            ),
         )
 
     # Create new configuration
@@ -137,9 +141,7 @@ async def update_watch_config(
     repo = WatchConfigurationRepository(session)
 
     # Build update dict (only include non-None values)
-    update_data = {
-        k: v for k, v in config.model_dump().items() if v is not None
-    }
+    update_data = {k: v for k, v in config.model_dump().items() if v is not None}
 
     updated_config = repo.update(config_id, **update_data)
 
@@ -182,7 +184,9 @@ async def delete_watch_config(
     session.commit()
 
 
-@router.post("/watch/configs/{config_id}/start", response_model=WatchConfigurationResponse)
+@router.post(
+    "/watch/configs/{config_id}/start", response_model=WatchConfigurationResponse
+)
 async def start_watching(
     config_id: UUID,
     session: Session = Depends(get_db),
@@ -211,7 +215,9 @@ async def start_watching(
     return WatchConfigurationResponse.model_validate(updated_config)
 
 
-@router.post("/watch/configs/{config_id}/stop", response_model=WatchConfigurationResponse)
+@router.post(
+    "/watch/configs/{config_id}/stop", response_model=WatchConfigurationResponse
+)
 async def stop_watching(
     config_id: UUID,
     session: Session = Depends(get_db),

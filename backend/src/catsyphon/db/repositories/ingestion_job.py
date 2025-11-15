@@ -215,9 +215,7 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             Dictionary with source type counts
         """
         results = (
-            self.session.query(
-                IngestionJob.source_type, func.count(IngestionJob.id)
-            )
+            self.session.query(IngestionJob.source_type, func.count(IngestionJob.id))
             .group_by(IngestionJob.source_type)
             .all()
         )

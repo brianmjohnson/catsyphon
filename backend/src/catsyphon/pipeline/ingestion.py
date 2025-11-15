@@ -136,7 +136,9 @@ def ingest_conversation(
                     ingestion_job.processing_time_ms = elapsed_ms
                     ingestion_job.completed_at = datetime.utcnow()
                     session.flush()
-                    logger.debug(f"Updated ingestion job to duplicate: {ingestion_job.id}")
+                    logger.debug(
+                        f"Updated ingestion job to duplicate: {ingestion_job.id}"
+                    )
 
                     session.refresh(existing_raw_log.conversation)
                     return existing_raw_log.conversation
@@ -144,7 +146,9 @@ def ingest_conversation(
                 # Update ingestion job as failed
                 elapsed_ms = int((time.time() * 1000) - start_ms)
                 ingestion_job.status = "failed"
-                ingestion_job.error_message = f"Duplicate file (hash: {file_hash[:8]}...)"
+                ingestion_job.error_message = (
+                    f"Duplicate file (hash: {file_hash[:8]}...)"
+                )
                 ingestion_job.processing_time_ms = elapsed_ms
                 ingestion_job.completed_at = datetime.utcnow()
                 session.flush()
@@ -265,7 +269,9 @@ def ingest_conversation(
 
                     # Update ingestion job as successful incremental
                     elapsed_ms = int((time.time() * 1000) - start_ms)
-                    messages_added = len(parsed.messages) - existing_conversation.message_count
+                    messages_added = (
+                        len(parsed.messages) - existing_conversation.message_count
+                    )
                     ingestion_job.status = "success"
                     ingestion_job.conversation_id = updated_conversation.id
                     ingestion_job.raw_log_id = existing_raw_log.id
@@ -275,8 +281,9 @@ def ingest_conversation(
                     ingestion_job.completed_at = datetime.utcnow()
                     session.flush()
                     logger.debug(
-                        f"Updated ingestion job to success (incremental): {ingestion_job.id}, "
-                        f"messages_added={messages_added}, processing_time={elapsed_ms}ms"
+                        f"Updated ingestion job to success (incremental): "
+                        f"{ingestion_job.id}, messages_added={messages_added}, "
+                        f"processing_time={elapsed_ms}ms"
                     )
 
                     return updated_conversation
