@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload,
   FolderSearch,
@@ -17,9 +18,21 @@ import {
   XCircle,
   Loader2,
   Clock,
+  Play,
+  Square,
+  Trash2,
+  Plus,
+  FolderOpen,
 } from 'lucide-react';
-import { uploadSingleConversationLog } from '@/lib/api';
-import type { UploadResult } from '@/types/api';
+import {
+  uploadSingleConversationLog,
+  getWatchConfigs,
+  createWatchConfig,
+  deleteWatchConfig,
+  startWatching,
+  stopWatching,
+} from '@/lib/api';
+import type { UploadResult, WatchConfigurationResponse } from '@/types/api';
 
 type Tab = 'upload' | 'watch' | 'activity' | 'history';
 
@@ -463,14 +476,285 @@ function BulkUploadTab() {
 }
 
 function WatchDirectoriesTab() {
+  const queryClient = useQueryClient();
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newDirectory, setNewDirectory] = useState('');
+  const [enableTagging, setEnableTagging] = useState(false);
+
+  // Fetch watch configs
+  const { data: configs, isLoading, error } = useQuery({
+    queryKey: ['watchConfigs'],
+    queryFn: () => getWatchConfigs(),
+  });
+
+  // Create watch config mutation
+  const createMutation = useMutation({
+    mutationFn: createWatchConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchConfigs'] });
+      setShowAddForm(false);
+      setNewDirectory('');
+      setEnableTagging(false);
+    },
+  });
+
+  // Start watching mutation
+  const startMutation = useMutation({
+    mutationFn: startWatching,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchConfigs'] });
+    },
+  });
+
+  // Stop watching mutation
+  const stopMutation = useMutation({
+    mutationFn: stopWatching,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchConfigs'] });
+    },
+  });
+
+  // Delete watch config mutation
+  const deleteMutation = useMutation({
+    mutationFn: deleteWatchConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchConfigs'] });
+    },
+  });
+
+  const handleCreateConfig = () => {
+    if (!newDirectory.trim()) return;
+
+    createMutation.mutate({
+      directory: newDirectory.trim(),
+      enable_tagging: enableTagging,
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+        <p className="mt-4 text-muted-foreground">Loading watch configurations...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
+        <p className="text-destructive">
+          Error loading watch configurations: {error.message}
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-card border border-border rounded-lg p-8">
-      <h2 className="text-2xl font-semibold mb-4">Watch Directories</h2>
-      <p className="text-muted-foreground">
-        Configure directories for automatic conversation log monitoring and ingestion.
-      </p>
-      <div className="mt-8 text-center text-muted-foreground">
-        Coming soon - create, edit, delete, start/stop watch configurations
+    <div>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-semibold mb-2">Watch Directories</h2>
+          <p className="text-muted-foreground">
+            Configure directories for automatic conversation log monitoring and ingestion.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors flex items-center gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          Add Directory
+        </button>
+      </div>
+
+      {/* Add New Config Form */}
+      {showAddForm && (
+        <div className="mb-6 p-6 bg-card border border-border rounded-lg">
+          <h3 className="text-lg font-semibold mb-4">Add Watch Directory</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Directory Path <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="text"
+                value={newDirectory}
+                onChange={(e) => setNewDirectory(e.target.value)}
+                placeholder="/path/to/watch/directory"
+                className="w-full px-3 py-2 bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="enableTagging"
+                checked={enableTagging}
+                onChange={(e) => setEnableTagging(e.target.checked)}
+                className="w-4 h-4 rounded border-border"
+              />
+              <label htmlFor="enableTagging" className="text-sm">
+                Enable AI tagging (uses OpenAI API)
+              </label>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCreateConfig}
+                disabled={createMutation.isPending || !newDirectory.trim()}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {createMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create'
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddForm(false);
+                  setNewDirectory('');
+                  setEnableTagging(false);
+                }}
+                className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+            {createMutation.isError && (
+              <p className="text-sm text-destructive">
+                Error: {createMutation.error.message}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Watch Configs List */}
+      {configs && configs.length === 0 ? (
+        <div className="text-center py-12 border-2 border-dashed border-border rounded-lg">
+          <FolderOpen className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-semibold mb-2">No Watch Directories</h3>
+          <p className="text-muted-foreground mb-4">
+            Add a directory to start automatic log ingestion
+          </p>
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          >
+            Add Your First Directory
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {configs?.map((config) => (
+            <WatchConfigCard
+              key={config.id}
+              config={config}
+              onStart={() => startMutation.mutate(config.id)}
+              onStop={() => stopMutation.mutate(config.id)}
+              onDelete={() => {
+                if (
+                  confirm(
+                    `Delete watch configuration for ${config.directory}?`
+                  )
+                ) {
+                  deleteMutation.mutate(config.id);
+                }
+              }}
+              isStarting={startMutation.isPending}
+              isStopping={stopMutation.isPending}
+              isDeleting={deleteMutation.isPending}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Watch Config Card Component
+interface WatchConfigCardProps {
+  config: WatchConfigurationResponse;
+  onStart: () => void;
+  onStop: () => void;
+  onDelete: () => void;
+  isStarting: boolean;
+  isStopping: boolean;
+  isDeleting: boolean;
+}
+
+function WatchConfigCard({
+  config,
+  onStart,
+  onStop,
+  onDelete,
+  isStarting,
+  isStopping,
+  isDeleting,
+}: WatchConfigCardProps) {
+  return (
+    <div className="p-6 bg-card border border-border rounded-lg">
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-2">
+            <FolderSearch className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-lg font-semibold">{config.directory}</h3>
+            <span
+              className={`px-2 py-1 text-xs font-medium rounded-full ${
+                config.is_active
+                  ? 'bg-green-500/10 text-green-600 border border-green-500'
+                  : 'bg-gray-500/10 text-gray-600 border border-gray-500'
+              }`}
+            >
+              {config.is_active ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+          <div className="ml-8 space-y-1 text-sm text-muted-foreground">
+            {config.enable_tagging && (
+              <p>✓ AI tagging enabled</p>
+            )}
+            {config.last_started_at && (
+              <p>
+                Last started:{' '}
+                {new Date(config.last_started_at).toLocaleString()}
+              </p>
+            )}
+            <p>ID: {config.id}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {config.is_active ? (
+            <button
+              onClick={onStop}
+              disabled={isStopping}
+              className="px-3 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <Square className="h-4 w-4" />
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={onStart}
+              disabled={isStarting}
+              className="px-3 py-2 bg-green-500/10 text-green-600 rounded-md hover:bg-green-500/20 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              <Play className="h-4 w-4" />
+              Start
+            </button>
+          )}
+          <button
+            onClick={onDelete}
+            disabled={config.is_active || isDeleting}
+            className="px-3 py-2 bg-destructive/10 text-destructive rounded-md hover:bg-destructive/20 transition-colors disabled:opacity-50"
+            title={config.is_active ? 'Stop watching before deleting' : 'Delete configuration'}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
