@@ -61,3 +61,6 @@ disallow_untyped_defs = true
 testpaths = ["tests"]
 addopts = "--cov=src/catsyphon --cov-report=term-missing"
 pythonpath = ["src"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

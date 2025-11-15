@@ -124,7 +124,7 @@ class TestWatcherDaemonLifecycle:
 
         # Verify observer stopped
         daemon.observer.stop.assert_called_once()
-        daemon.observer.join.assert_called_once_with(timeout=5)
+        daemon.observer.join.assert_called_once_with(timeout=3)
 
     @patch("catsyphon.watch.sys.exit")
     def test_signal_handler_stops_daemon(self, mock_exit, temp_watch_dir):

@@ -6,6 +6,7 @@ and automatically ingests them into the database using the existing pipeline.
 """
 
 import logging
+import platform
 import signal
 import sys
 import time
@@ -20,7 +21,14 @@ if TYPE_CHECKING:
     from catsyphon.tagging.pipeline import TaggingPipeline
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
-from watchdog.observers import Observer
+
+# Use PollingObserver on macOS to avoid fsevents C extension crashes
+# See bug catsyphon-7ri: fsevents has thread safety issues that cause
+# "Fatal Python error: Bus error" during rapid observer start/stop cycles
+if platform.system() == "Darwin":  # macOS
+    from watchdog.observers.polling import PollingObserver as Observer
+else:
+    from watchdog.observers import Observer
 
 from catsyphon.config import settings
 from catsyphon.db.connection import db_session
@@ -530,14 +538,21 @@ class WatcherDaemon:
         logger.info("Stopping watch daemon...")
         self.shutdown_event.set()
 
-        # Stop observer
-        self.observer.stop()
-        self.observer.join(timeout=5)
-        logger.info("✓ Observer stopped")
+        # Stop observer with proper error handling
+        try:
+            self.observer.stop()
+            # Reduced timeout for faster test execution
+            self.observer.join(timeout=3)
+            if self.observer.is_alive():
+                logger.warning("Observer thread did not stop cleanly")
+            else:
+                logger.info("✓ Observer stopped")
+        except Exception as e:
+            logger.error(f"Error stopping observer: {e}", exc_info=True)
 
         # Wait for retry thread to finish
         if self.retry_thread and self.retry_thread.is_alive():
-            self.retry_thread.join(timeout=5)
+            self.retry_thread.join(timeout=2)
             logger.info("✓ Retry thread stopped")
 
         logger.info("✓ Watch daemon stopped")

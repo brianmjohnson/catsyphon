@@ -34,7 +34,7 @@ class RestartPolicy:
 
     def should_restart(self) -> bool:
         """Check if daemon should be restarted."""
-        if self.restart_attempts >= len(self.backoff_intervals):
+        if self.restart_attempts > len(self.backoff_intervals):
             return False  # Exceeded max restart attempts
 
         if self.next_restart_at is None:
@@ -88,17 +88,19 @@ class DaemonManager:
     - Graceful shutdown of all daemons
     """
 
-    def __init__(self, stats_sync_interval: int = 30):
+    def __init__(self, stats_sync_interval: int = 30, health_check_interval: int = 30):
         """
         Initialize the daemon manager.
 
         Args:
             stats_sync_interval: How often to sync stats to DB (seconds)
+            health_check_interval: How often to check daemon health (seconds)
         """
         self._daemons: Dict[UUID, DaemonEntry] = {}
         self._lock = Lock()
         self._shutdown_event = Event()
         self._stats_sync_interval = stats_sync_interval
+        self._health_check_interval = health_check_interval
 
         # Background threads
         self._stats_sync_thread: Optional[Thread] = None
@@ -423,7 +425,7 @@ class DaemonManager:
 
     def _health_check_loop(self) -> None:
         """Background thread that monitors daemon health and restarts crashed daemons."""
-        logger.info("Health check thread started (interval: 30s)")
+        logger.info(f"Health check thread started (interval: {self._health_check_interval}s)")
 
         while not self._shutdown_event.is_set():
             try:
@@ -431,84 +433,95 @@ class DaemonManager:
                     config_ids = list(self._daemons.keys())
 
                 for config_id in config_ids:
-                    try:
-                        with self._lock:
-                            if config_id not in self._daemons:
-                                continue
-                            entry = self._daemons[config_id]
-
-                        # Check if thread is alive
-                        if not entry.thread.is_alive():
-                            logger.warning(f"Daemon crashed for config {config_id}")
-
-                            # Record crash
-                            entry.restart_policy.record_crash()
-
-                            # Attempt restart if policy allows
-                            if entry.restart_policy.should_restart():
-                                logger.info(
-                                    f"Attempting to restart daemon for config {config_id}..."
-                                )
-
-                                try:
-                                    # Remove dead daemon
-                                    with self._lock:
-                                        del self._daemons[config_id]
-
-                                    # Load fresh config from DB
-                                    with db_session() as session:
-                                        repo = WatchConfigurationRepository(session)
-                                        config = repo.get(config_id)
-
-                                        if config and config.is_active:
-                                            self.start_daemon(config)
-                                            logger.info(
-                                                f"✓ Restarted daemon for config {config_id}"
-                                            )
-                                        else:
-                                            logger.warning(
-                                                f"Config {config_id} is no longer active, not restarting"
-                                            )
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to restart daemon for config {config_id}: {e}",
-                                        exc_info=True,
-                                    )
-                            else:
-                                logger.error(
-                                    f"Exceeded restart attempts for config {config_id}, "
-                                    "marking as inactive"
-                                )
-
-                                # Mark as inactive in DB
-                                try:
-                                    with db_session() as session:
-                                        repo = WatchConfigurationRepository(session)
-                                        repo.deactivate(config_id)
-                                        session.commit()
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to deactivate config: {e}",
-                                        exc_info=True,
-                                    )
-
-                                # Remove from tracking
-                                with self._lock:
-                                    if config_id in self._daemons:
-                                        del self._daemons[config_id]
-
-                    except Exception as e:
-                        logger.error(
-                            f"Error checking health for {config_id}: {e}", exc_info=True
-                        )
+                    self._check_daemon_health(config_id)
 
             except Exception as e:
                 logger.error(f"Error in health check loop: {e}", exc_info=True)
 
             # Wait before next health check
-            self._shutdown_event.wait(timeout=30)
+            self._shutdown_event.wait(timeout=self._health_check_interval)
 
         logger.info("Health check thread stopped")
+
+    def _check_daemon_health(self, config_id: UUID) -> None:
+        """
+        Check health of a single daemon and restart if crashed.
+
+        Separated from _health_check_loop for testability.
+
+        Args:
+            config_id: Watch configuration ID to check
+        """
+        try:
+            with self._lock:
+                if config_id not in self._daemons:
+                    return
+                entry = self._daemons[config_id]
+
+            # Check if thread is alive
+            if not entry.thread.is_alive():
+                logger.warning(f"Daemon crashed for config {config_id}")
+
+                # Record crash
+                entry.restart_policy.record_crash()
+
+                # Attempt restart if policy allows
+                if entry.restart_policy.should_restart():
+                    logger.info(
+                        f"Attempting to restart daemon for config {config_id}..."
+                    )
+
+                    try:
+                        # Remove dead daemon
+                        with self._lock:
+                            del self._daemons[config_id]
+
+                        # Load fresh config from DB
+                        with db_session() as session:
+                            repo = WatchConfigurationRepository(session)
+                            config = repo.get(config_id)
+
+                            if config and config.is_active:
+                                self.start_daemon(config)
+                                logger.info(
+                                    f"✓ Restarted daemon for config {config_id}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Config {config_id} is no longer active, not restarting"
+                                )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to restart daemon for config {config_id}: {e}",
+                            exc_info=True,
+                        )
+                else:
+                    logger.error(
+                        f"Exceeded restart attempts for config {config_id}, "
+                        "marking as inactive"
+                    )
+
+                    # Mark as inactive in DB
+                    try:
+                        with db_session() as session:
+                            repo = WatchConfigurationRepository(session)
+                            repo.deactivate(config_id)
+                            session.commit()
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to deactivate config: {e}",
+                            exc_info=True,
+                        )
+
+                    # Remove from tracking
+                    with self._lock:
+                        if config_id in self._daemons:
+                            del self._daemons[config_id]
+
+        except Exception as e:
+            logger.error(
+                f"Error checking health for {config_id}: {e}", exc_info=True
+            )
 
     def _save_daemon_stats(self, config_id: UUID, entry: DaemonEntry) -> None:
         """

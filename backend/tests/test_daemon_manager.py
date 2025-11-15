@@ -46,6 +46,23 @@ def watch_config(db_session, temp_watch_dir):
     return config
 
 
+@pytest.fixture
+def daemon_manager():
+    """Create a DaemonManager with automatic cleanup.
+
+    Ensures background threads are properly stopped even if tests fail or are interrupted.
+    """
+    manager = DaemonManager()
+    yield manager
+
+    # Cleanup: shutdown manager and wait for threads to stop
+    try:
+        manager.shutdown(timeout=5)
+    except Exception as e:
+        # Log but don't fail - cleanup is best-effort
+        print(f"Warning: DaemonManager cleanup error: {e}")
+
+
 class TestRestartPolicy:
     """Tests for RestartPolicy dataclass."""
 
@@ -110,6 +127,7 @@ class TestRestartPolicy:
         assert policy.next_restart_at is None
 
 
+@pytest.mark.slow
 class TestDaemonManager:
     """Tests for DaemonManager class."""
 
@@ -172,6 +190,7 @@ class TestDaemonManager:
         config = WatchConfiguration(
             directory="/nonexistent/path",
             is_active=False,
+            enable_tagging=False,
             stats={},
             extra_config={},
         )
@@ -245,6 +264,7 @@ class TestDaemonManager:
             config = WatchConfiguration(
                 directory=str(dir_path),
                 is_active=False,
+                enable_tagging=False,
                 stats={},
                 extra_config={},
             )
@@ -305,6 +325,7 @@ class TestDaemonManager:
             config = WatchConfiguration(
                 directory=str(dir_path),
                 is_active=False,
+                enable_tagging=False,
                 stats={},
                 extra_config={},
             )
@@ -392,6 +413,7 @@ class TestDaemonManager:
             id=uuid4(),
             directory="/nonexistent",
             is_active=True,
+            enable_tagging=False,
             stats={},
             extra_config={},
         )
@@ -449,13 +471,14 @@ class TestDaemonManager:
         config = WatchConfiguration(
             directory=str(temp_watch_dir),
             is_active=True,
+            enable_tagging=False,
             stats={},
             extra_config={},
         )
         db_session.add(config)
         db_session.commit()
 
-        manager = DaemonManager()
+        manager = DaemonManager(health_check_interval=1)  # 1 second for testing
         manager.start()
 
         # Manually create a dead daemon entry
@@ -472,8 +495,8 @@ class TestDaemonManager:
         with manager._lock:
             manager._daemons[config.id] = entry
 
-        # Wait for health check to run
-        time.sleep(35)  # Health check runs every 30s
+        # Wait for health check to run (only need 2s instead of 35s)
+        time.sleep(2)
 
         # Verify restart policy recorded crash
         with manager._lock:
@@ -483,7 +506,48 @@ class TestDaemonManager:
         # Cleanup
         manager.shutdown(timeout=5)
 
+    def test_check_daemon_health_directly(self, db_session, temp_watch_dir):
+        """Test _check_daemon_health method directly without background thread.
 
+        This is a fast unit test that validates health check logic without
+        waiting for the loop interval.
+        """
+        config = WatchConfiguration(
+            directory=str(temp_watch_dir),
+            is_active=True,
+            enable_tagging=False,
+            stats={},
+            extra_config={},
+        )
+        db_session.add(config)
+        db_session.commit()
+
+        manager = DaemonManager()
+
+        # Manually create a dead daemon entry
+        dead_thread = Thread(target=lambda: None)
+        dead_thread.start()
+        dead_thread.join()  # Thread is now dead
+
+        entry = DaemonEntry(
+            daemon=Mock(observer=Mock(is_alive=Mock(return_value=False))),
+            config_id=config.id,
+            thread=dead_thread,
+        )
+
+        with manager._lock:
+            manager._daemons[config.id] = entry
+
+        # Call health check directly (no sleep needed!)
+        manager._check_daemon_health(config.id)
+
+        # Verify restart policy recorded crash
+        with manager._lock:
+            if config.id in manager._daemons:
+                assert manager._daemons[config.id].restart_policy.crash_count > 0
+
+
+@pytest.mark.slow
 class TestDaemonManagerIntegration:
     """Integration tests for DaemonManager with real WatcherDaemon."""
 

@@ -20,9 +20,11 @@ from catsyphon.models.db import (
     Developer,
     Epoch,
     FileTouched,
+    IngestionJob,
     Message,
     Project,
     RawLog,
+    WatchConfiguration,
 )
 
 
@@ -76,7 +78,7 @@ def db_session(test_engine) -> Generator[Session, None, None]:
 @pytest.fixture
 def api_client(db_session: Session):
     """Create a test client for FastAPI with database dependency override."""
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     from fastapi.testclient import TestClient
 
@@ -94,9 +96,26 @@ def api_client(db_session: Session):
 
     app.dependency_overrides[get_db] = override_get_db
 
+    # Mock DaemonManager for watch endpoints
+    mock_daemon_manager = MagicMock()
+    mock_daemon_manager.start_daemon.return_value = None
+    mock_daemon_manager.stop_daemon.return_value = None
+    mock_daemon_manager.get_daemon_status.return_value = {
+        "is_running": True,
+        "pid": 12345,
+        "stats": {},
+    }
+    mock_daemon_manager.get_all_status.return_value = {
+        "running_daemons": 0,
+        "total_daemons": 0,
+        "daemons": [],
+    }
+
     # Disable lifespan startup checks for testing
     with patch("catsyphon.api.app.run_all_startup_checks"):
         client = TestClient(app)
+        # Add daemon_manager to app state
+        client.app.state.daemon_manager = mock_daemon_manager
         yield client
 
     # Clean up
@@ -279,3 +298,179 @@ def sample_raw_log(db_session: Session, sample_conversation: Conversation) -> Ra
     db_session.commit()
     db_session.refresh(raw_log)
     return raw_log
+
+
+@pytest.fixture
+def watch_config(
+    db_session: Session, sample_project: Project, sample_developer: Developer
+) -> WatchConfiguration:
+    """Create a sample watch configuration (inactive) for testing."""
+    config = WatchConfiguration(
+        id=uuid.uuid4(),
+        directory="/Users/test/.claude/projects",
+        project_id=sample_project.id,
+        developer_id=sample_developer.id,
+        enable_tagging=False,
+        is_active=False,
+        stats={"files_processed": 0, "files_skipped": 0},
+        extra_config={"poll_interval": 2, "retry_interval": 300},
+        created_by="test_user",
+    )
+    db_session.add(config)
+    db_session.commit()
+    db_session.refresh(config)
+    return config
+
+
+@pytest.fixture
+def active_watch_config(
+    db_session: Session, sample_project: Project
+) -> WatchConfiguration:
+    """Create an active watch configuration for testing."""
+    config = WatchConfiguration(
+        id=uuid.uuid4(),
+        directory="/Users/test/.claude/active",
+        project_id=sample_project.id,
+        developer_id=None,
+        enable_tagging=True,
+        is_active=True,
+        stats={"files_processed": 5, "files_skipped": 2},
+        extra_config={"poll_interval": 5},
+        created_by="test_user",
+        last_started_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(config)
+    db_session.commit()
+    db_session.refresh(config)
+    return config
+
+
+@pytest.fixture
+def ingestion_job_success(
+    db_session: Session,
+    sample_conversation: Conversation,
+    sample_raw_log: RawLog,
+    watch_config: WatchConfiguration,
+) -> IngestionJob:
+    """Create a successful ingestion job for testing."""
+    job = IngestionJob(
+        id=uuid.uuid4(),
+        source_type="watch",
+        source_config_id=watch_config.id,
+        file_path="/path/to/conversation.jsonl",
+        raw_log_id=sample_raw_log.id,
+        conversation_id=sample_conversation.id,
+        status="success",
+        error_message=None,
+        processing_time_ms=1500,
+        incremental=False,
+        messages_added=10,
+        started_at=datetime.now(UTC) - timedelta(minutes=5),
+        completed_at=datetime.now(UTC) - timedelta(minutes=4, seconds=30),
+        created_by="watch_daemon",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    return job
+
+
+@pytest.fixture
+def ingestion_job_failed(db_session: Session, watch_config: WatchConfiguration) -> IngestionJob:
+    """Create a failed ingestion job for testing."""
+    job = IngestionJob(
+        id=uuid.uuid4(),
+        source_type="watch",
+        source_config_id=watch_config.id,
+        file_path="/path/to/invalid.jsonl",
+        raw_log_id=None,
+        conversation_id=None,
+        status="failed",
+        error_message="Invalid JSON format in log file",
+        processing_time_ms=200,
+        incremental=False,
+        messages_added=0,
+        started_at=datetime.now(UTC) - timedelta(minutes=10),
+        completed_at=datetime.now(UTC) - timedelta(minutes=9, seconds=59),
+        created_by="watch_daemon",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    return job
+
+
+@pytest.fixture
+def ingestion_job_upload(
+    db_session: Session,
+    sample_conversation: Conversation,
+    sample_raw_log: RawLog,
+) -> IngestionJob:
+    """Create an upload-based ingestion job for testing."""
+    job = IngestionJob(
+        id=uuid.uuid4(),
+        source_type="upload",
+        source_config_id=None,
+        file_path="/tmp/upload/conversation.jsonl",
+        raw_log_id=sample_raw_log.id,
+        conversation_id=sample_conversation.id,
+        status="success",
+        error_message=None,
+        processing_time_ms=2000,
+        incremental=False,
+        messages_added=15,
+        started_at=datetime.now(UTC) - timedelta(hours=2),
+        completed_at=datetime.now(UTC) - timedelta(hours=2, seconds=-2),
+        created_by="web_user@example.com",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+    return job
+
+
+@pytest.fixture(autouse=True)
+def use_polling_observer_for_tests(monkeypatch):
+    """
+    Use PollingObserver instead of FSEventsObserver in all tests.
+
+    This avoids fsevents C extension crashes during rapid observer
+    start/stop cycles in tests. See bug catsyphon-7ri.
+
+    The fsevents observer has thread safety issues that cause
+    "Fatal Python error: Bus error" on macOS during test runs.
+    """
+    from watchdog.observers.polling import PollingObserver
+
+    from catsyphon import watch
+
+    # Monkey-patch Observer to use PollingObserver
+    monkeypatch.setattr(watch, "Observer", PollingObserver)
+
+
+@pytest.fixture
+def mock_observer():
+    """
+    Create a mock Observer for fast unit tests.
+
+    Use this for tests that only need daemon lifecycle management,
+    not actual file watching behavior. This makes tests ~10x faster
+    by eliminating real filesystem I/O.
+
+    Example:
+        def test_start_daemon(watch_config, mock_observer):
+            manager = DaemonManager()
+            with patch('catsyphon.watch.Observer', return_value=mock_observer):
+                manager.start_daemon(watch_config)
+            # No time.sleep needed - instant with mock!
+    """
+    from unittest.mock import Mock
+
+    mock_obs = Mock(spec=["start", "stop", "join", "is_alive", "schedule", "unschedule"])
+    mock_obs.is_alive.return_value = True
+    mock_obs.start.return_value = None
+    mock_obs.stop.return_value = None
+    mock_obs.join.return_value = None
+    mock_obs.schedule.return_value = None
+    mock_obs.unschedule.return_value = None
+    return mock_obs
