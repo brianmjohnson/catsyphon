@@ -273,6 +273,7 @@ class TestStartWatchingFunction:
                 max_retries=3,
                 debounce_seconds=1.0,
                 enable_tagging=False,
+                config_id=None,
             )
 
             # Verify daemon started
