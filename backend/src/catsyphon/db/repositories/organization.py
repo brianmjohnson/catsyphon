@@ -27,9 +27,7 @@ class OrganizationRepository(BaseRepository[Organization]):
             Organization instance or None
         """
         return (
-            self.session.query(Organization)
-            .filter(Organization.slug == slug)
-            .first()
+            self.session.query(Organization).filter(Organization.slug == slug).first()
         )
 
     def get_by_name(self, name: str) -> Optional[Organization]:
@@ -43,9 +41,7 @@ class OrganizationRepository(BaseRepository[Organization]):
             Organization instance or None
         """
         return (
-            self.session.query(Organization)
-            .filter(Organization.name == name)
-            .first()
+            self.session.query(Organization).filter(Organization.name == name).first()
         )
 
     def search_by_name(self, name_pattern: str) -> List[Organization]:

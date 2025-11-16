@@ -27,9 +27,7 @@ class WorkspaceRepository(BaseRepository[Workspace]):
         Returns:
             Workspace instance or None
         """
-        return (
-            self.session.query(Workspace).filter(Workspace.slug == slug).first()
-        )
+        return self.session.query(Workspace).filter(Workspace.slug == slug).first()
 
     def get_by_name(
         self, name: str, organization_id: Optional[uuid.UUID] = None
