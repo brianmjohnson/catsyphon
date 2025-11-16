@@ -377,15 +377,18 @@ class TestDaemonManager:
         assert manager._shutdown_event.is_set()
 
     @patch("catsyphon.daemon_manager.db_session")
-    def test_load_active_configs(self, mock_db_session, watch_config):
+    def test_load_active_configs(self, mock_db_session, watch_config, sample_workspace):
         """Test loading active configs on startup."""
         # Mark config as active
         watch_config.is_active = True
 
         # Mock database session
         mock_session = Mock()
-        mock_repo = Mock()
-        mock_repo.get_all_active.return_value = [watch_config]
+        mock_watch_repo = Mock()
+        mock_watch_repo.get_all_active.return_value = [watch_config]
+
+        mock_workspace_repo = Mock()
+        mock_workspace_repo.get_all.return_value = [sample_workspace]
 
         mock_db_session.return_value.__enter__.return_value = mock_session
 
@@ -404,9 +407,15 @@ class TestDaemonManager:
                 ),
             ),
         ) as mock_start:
-            with patch(
-                "catsyphon.daemon_manager.WatchConfigurationRepository",
-                return_value=mock_repo,
+            with (
+                patch(
+                    "catsyphon.daemon_manager.WatchConfigurationRepository",
+                    return_value=mock_watch_repo,
+                ),
+                patch(
+                    "catsyphon.daemon_manager.WorkspaceRepository",
+                    return_value=mock_workspace_repo,
+                ),
             ):
                 manager.load_active_configs()
 
@@ -414,7 +423,9 @@ class TestDaemonManager:
             mock_start.assert_called_once_with(watch_config)
 
     @patch("catsyphon.daemon_manager.db_session")
-    def test_load_active_configs_handles_errors(self, mock_db_session):
+    def test_load_active_configs_handles_errors(
+        self, mock_db_session, sample_workspace
+    ):
         """Test load_active_configs handles daemon start errors gracefully."""
         # Create a config that will fail to start
         bad_config = WatchConfiguration(
@@ -428,23 +439,32 @@ class TestDaemonManager:
 
         # Mock database
         mock_session = Mock()
-        mock_repo = Mock()
-        mock_repo.get_all_active.return_value = [bad_config]
-        mock_repo.deactivate.return_value = None
+        mock_watch_repo = Mock()
+        mock_watch_repo.get_all_active.return_value = [bad_config]
+        mock_watch_repo.deactivate.return_value = None
+
+        mock_workspace_repo = Mock()
+        mock_workspace_repo.get_all.return_value = [sample_workspace]
 
         mock_db_session.return_value.__enter__.return_value = mock_session
 
         manager = DaemonManager()
 
-        with patch(
-            "catsyphon.daemon_manager.WatchConfigurationRepository",
-            return_value=mock_repo,
+        with (
+            patch(
+                "catsyphon.daemon_manager.WatchConfigurationRepository",
+                return_value=mock_watch_repo,
+            ),
+            patch(
+                "catsyphon.daemon_manager.WorkspaceRepository",
+                return_value=mock_workspace_repo,
+            ),
         ):
             # Should not raise - errors are logged
             manager.load_active_configs()
 
             # Verify it tried to deactivate the failed config
-            mock_repo.deactivate.assert_called_once_with(bad_config.id)
+            mock_watch_repo.deactivate.assert_called_once_with(bad_config.id)
 
     @patch("catsyphon.daemon_manager.db_session")
     def test_stats_sync_loop(self, mock_db_session, watch_config):

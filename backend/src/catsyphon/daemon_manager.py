@@ -16,6 +16,7 @@ from uuid import UUID
 
 from catsyphon.db.connection import db_session
 from catsyphon.db.repositories.watch_config import WatchConfigurationRepository
+from catsyphon.db.repositories.workspace import WorkspaceRepository
 from catsyphon.models.db import WatchConfiguration
 from catsyphon.watch import WatcherDaemon
 
@@ -135,8 +136,18 @@ class DaemonManager:
         logger.info("Loading active watch configurations...")
 
         with db_session() as session:
+            # Get default workspace
+            workspace_repo = WorkspaceRepository(session)
+            workspaces = workspace_repo.get_all(limit=1)
+
+            if not workspaces:
+                logger.info("No workspace found - skipping watch configuration loading")
+                return
+
+            workspace_id = workspaces[0].id
+
             repo = WatchConfigurationRepository(session)
-            active_configs = repo.get_all_active()
+            active_configs = repo.get_all_active(workspace_id)
 
             if not active_configs:
                 logger.info("No active watch configurations found")
@@ -388,9 +399,7 @@ class DaemonManager:
         """
         # Get snapshot of all daemon entries with lock held (quick operation)
         with self._lock:
-            entries = {
-                config_id: entry for config_id, entry in self._daemons.items()
-            }
+            entries = {config_id: entry for config_id, entry in self._daemons.items()}
 
         # Format statuses outside the lock to avoid nested locking
         daemon_statuses = {
@@ -443,7 +452,9 @@ class DaemonManager:
 
     def _health_check_loop(self) -> None:
         """Background thread that monitors daemon health and restarts crashed daemons."""
-        logger.info(f"Health check thread started (interval: {self._health_check_interval}s)")
+        logger.info(
+            f"Health check thread started (interval: {self._health_check_interval}s)"
+        )
 
         while not self._shutdown_event.is_set():
             try:
@@ -537,9 +548,7 @@ class DaemonManager:
                             del self._daemons[config_id]
 
         except Exception as e:
-            logger.error(
-                f"Error checking health for {config_id}: {e}", exc_info=True
-            )
+            logger.error(f"Error checking health for {config_id}: {e}", exc_info=True)
 
     def _save_daemon_stats(self, config_id: UUID, entry: DaemonEntry) -> None:
         """
