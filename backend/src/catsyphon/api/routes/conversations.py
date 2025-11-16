@@ -208,9 +208,13 @@ async def get_conversation(
     Returns full conversation with all messages, epochs, files touched, and tags.
     """
     repo = ConversationRepository(session)
+    workspace_id = _get_default_workspace_id(session)
+
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Get conversation with all relations loaded
-    conversation = repo.get_with_relations(conversation_id)
+    conversation = repo.get_with_relations(conversation_id, workspace_id)
 
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -233,7 +237,14 @@ async def get_conversation_messages(
     """
     # First verify conversation exists
     conv_repo = ConversationRepository(session)
-    if not conv_repo.get(conversation_id):
+    workspace_id = _get_default_workspace_id(session)
+
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Verify conversation exists and belongs to workspace
+    conversation = conv_repo.get(conversation_id)
+    if not conversation or conversation.workspace_id != workspace_id:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Get messages
