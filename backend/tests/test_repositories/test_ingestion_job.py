@@ -27,11 +27,12 @@ def job_repo(db_session: Session) -> IngestionJobRepository:
 
 @pytest.fixture
 def sample_watch_config(
-    db_session: Session, sample_project: Project
+    db_session: Session, sample_workspace, sample_project: Project
 ) -> WatchConfiguration:
     """Create a sample watch configuration for testing."""
     config = WatchConfiguration(
         id=uuid.uuid4(),
+        workspace_id=sample_workspace.id,
         directory="/test/watch/path",
         project_id=sample_project.id,
         enable_tagging=False,
