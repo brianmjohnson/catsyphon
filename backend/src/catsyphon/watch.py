@@ -618,8 +618,9 @@ class WatcherDaemon:
         try:
             with db_session() as session:
                 raw_log_repo = RawLogRepository(session)
+                # Resolve symlinks to match how files are stored in database
                 tracked_files = raw_log_repo.get_files_in_directory(
-                    str(self.directory)
+                    str(self.directory.resolve())
                 )
 
                 if not tracked_files:
