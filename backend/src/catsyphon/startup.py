@@ -31,6 +31,7 @@ class StartupMetrics:
     database_check_ms: Optional[float] = None
     migrations_check_ms: Optional[float] = None
     openai_check_ms: Optional[float] = None
+    cache_check_ms: Optional[float] = None
     checks_passed: bool = False
     last_check_time: Optional[datetime] = None
 
@@ -266,6 +267,53 @@ def check_openai_configuration() -> None:
         ) from e
 
 
+def check_cache_directory() -> None:
+    """
+    Validate cache directory exists and is writable.
+
+    Creates directory if it doesn't exist. Follows XDG Base Directory Specification.
+
+    Raises:
+        StartupCheckError: If cache directory cannot be created or is not writable
+    """
+    from pathlib import Path
+
+    cache_dir = Path(settings.tagging_cache_dir)
+
+    try:
+        # Create directory if it doesn't exist (including parent directories)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Test write permissions by creating a test file
+        test_file = cache_dir / ".write_test"
+        try:
+            test_file.write_text("test")
+            test_file.unlink()  # Clean up test file
+        except PermissionError:
+            raise StartupCheckError(
+                f"Cache directory exists but is not writable: {cache_dir}",
+                f"Fix permissions: chmod u+w {cache_dir}",
+            )
+
+    except PermissionError as e:
+        raise StartupCheckError(
+            f"Cannot create cache directory: {cache_dir}\n"
+            f"Permission denied: {str(e)}",
+            f"Create directory manually: mkdir -p {cache_dir}\n"
+            f"  Or check parent directory permissions",
+        ) from e
+    except OSError as e:
+        raise StartupCheckError(
+            f"Failed to create cache directory: {cache_dir}\n" f"Error: {str(e)}",
+            f"Check filesystem and parent directory permissions",
+        ) from e
+    except Exception as e:
+        raise StartupCheckError(
+            f"Unexpected error checking cache directory: {str(e)}",
+            f"Verify TAGGING_CACHE_DIR setting: {cache_dir}",
+        ) from e
+
+
 def run_all_startup_checks() -> None:
     """
     Execute all startup dependency checks.
@@ -274,7 +322,8 @@ def run_all_startup_checks() -> None:
     1. Environment variables
     2. Database connection
     3. Database migrations
-    4. OpenAI configuration (optional)
+    4. Cache directory (XDG-compliant)
+    5. OpenAI configuration (optional)
 
     Tracks timing metrics for each check.
 
@@ -289,6 +338,7 @@ def run_all_startup_checks() -> None:
         ("Environment Variables", check_required_environment, "environment_check_ms"),
         ("Database Connection", check_database_connection, "database_check_ms"),
         ("Database Migrations", check_database_migrations, "migrations_check_ms"),
+        ("Cache Directory", check_cache_directory, "cache_check_ms"),
         ("OpenAI Configuration", check_openai_configuration, "openai_check_ms"),
     ]
 

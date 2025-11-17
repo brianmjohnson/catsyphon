@@ -253,9 +253,13 @@ API_PORT=8000
 WATCH_POLL_INTERVAL=2
 
 # Tagging (optional)
-TAGGING_CACHE_DIR=.catsyphon_cache/tags  # Cache directory
-TAGGING_CACHE_TTL_DAYS=30                # Cache expiration
-TAGGING_ENABLE_CACHE=true                # Enable caching (reduces OpenAI costs)
+# Cache directory follows XDG Base Directory spec:
+#   - $XDG_CACHE_HOME/catsyphon/tags (if XDG_CACHE_HOME set)
+#   - $HOME/.cache/catsyphon/tags (default)
+#   - .catsyphon_cache/tags (fallback for dev/testing)
+TAGGING_CACHE_DIR=~/.cache/catsyphon/tags  # XDG-compliant cache directory
+TAGGING_CACHE_TTL_DAYS=30                   # Cache expiration
+TAGGING_ENABLE_CACHE=true                   # Enable caching (reduces OpenAI costs)
 ```
 
 Managed via Pydantic Settings in `backend/src/catsyphon/config.py`.

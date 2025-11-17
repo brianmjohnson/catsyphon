@@ -5,7 +5,34 @@ Centralized configuration management using Pydantic Settings.
 Loads configuration from environment variables.
 """
 
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def get_xdg_cache_dir() -> str:
+    """
+    Get XDG-compliant cache directory for CatSyphon.
+
+    Follows XDG Base Directory Specification:
+    - Uses $XDG_CACHE_HOME/catsyphon if XDG_CACHE_HOME is set
+    - Falls back to $HOME/.cache/catsyphon if not set
+    - Returns relative path .catsyphon_cache if HOME not available (dev/testing)
+
+    Returns:
+        str: Path to cache directory
+    """
+    xdg_cache_home = os.getenv("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return str(Path(xdg_cache_home) / "catsyphon")
+
+    home = os.getenv("HOME")
+    if home:
+        return str(Path(home) / ".cache" / "catsyphon")
+
+    # Fallback for development/testing environments without HOME
+    return ".catsyphon_cache"
 
 
 class Settings(BaseSettings):
@@ -40,7 +67,7 @@ class Settings(BaseSettings):
 
     # Tagging
     tagging_enabled: bool = False  # Enable LLM tagging by default (opt-in via flag)
-    tagging_cache_dir: str = ".catsyphon_cache/tags"  # Cache directory for tags
+    tagging_cache_dir: str = f"{get_xdg_cache_dir()}/tags"  # XDG-compliant cache directory
     tagging_cache_ttl_days: int = 30  # Cache time-to-live in days
     tagging_enable_cache: bool = True  # Enable caching (reduces OpenAI costs)
 
