@@ -92,6 +92,9 @@ class ConversationTags:
     tools_used: list[str] = field(default_factory=list)
     has_errors: bool = False
 
+    # LLM reasoning (why these tags were assigned)
+    reasoning: Optional[str] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for storage in JSONB."""
         return {
@@ -106,4 +109,5 @@ class ConversationTags:
             "patterns": self.patterns,
             "tools_used": self.tools_used,
             "has_errors": self.has_errors,
+            "reasoning": self.reasoning,
         }

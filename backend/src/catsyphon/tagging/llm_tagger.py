@@ -46,6 +46,9 @@ TAGGING_PROMPT = """Analyze this coding agent conversation and extract metadata 
 
 6. **problems** - List of problems or blockers encountered (max 5)
 
+7. **reasoning** - Brief explanation (2-3 sentences) of why you assigned these tags,
+   highlighting key evidence from the conversation that informed your analysis.
+
 Return ONLY valid JSON in this exact format:
 {{
   "intent": "one of the intent options",
@@ -53,7 +56,8 @@ Return ONLY valid JSON in this exact format:
   "sentiment": "one of the sentiment options",
   "sentiment_score": 0.0,
   "features": ["feature1", "feature2"],
-  "problems": ["problem1", "problem2"]
+  "problems": ["problem1", "problem2"],
+  "reasoning": "Brief explanation of tag assignments..."
 }}"""
 
 
@@ -185,6 +189,9 @@ class LLMTagger:
         features = tags_dict.get("features", [])[:5]
         problems = tags_dict.get("problems", [])[:5]
 
+        # Extract reasoning
+        reasoning = tags_dict.get("reasoning")
+
         return ConversationTags(
             intent=intent,
             outcome=outcome,
@@ -192,6 +199,7 @@ class LLMTagger:
             sentiment_score=sentiment_score,
             features=features,
             problems=problems,
+            reasoning=reasoning,
         )
 
     def _fallback_tags(self) -> ConversationTags:
