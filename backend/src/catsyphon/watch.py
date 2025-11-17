@@ -523,6 +523,9 @@ class WatcherDaemon:
         self.observer.start()
         logger.info("✓ Observer started")
 
+        # Scan existing files for changes during downtime
+        self._scan_existing_files()
+
         # Start retry thread (not daemon - we want clean shutdown)
         self.retry_thread = Thread(target=self._retry_loop, daemon=False)
         self.retry_thread.start()
@@ -597,6 +600,71 @@ class WatcherDaemon:
         logger.info(f"Received signal {signum}, shutting down...")
         self.stop()
         sys.exit(0)
+
+    def _scan_existing_files(self) -> None:
+        """
+        Scan for files tracked in database that changed during downtime.
+
+        Called once during daemon startup to detect changes that occurred
+        while the daemon was not running. Files that have changed are
+        re-processed using incremental or full reparse as appropriate.
+        """
+        logger.info(f"Scanning existing files in {self.directory}...")
+
+        from catsyphon.db.connection import db_session
+        from catsyphon.db.repositories.raw_log import RawLogRepository
+        from catsyphon.parsers.incremental import ChangeType, detect_file_change_type
+
+        try:
+            with db_session() as session:
+                raw_log_repo = RawLogRepository(session)
+                tracked_files = raw_log_repo.get_files_in_directory(
+                    str(self.directory)
+                )
+
+                if not tracked_files:
+                    logger.info("No tracked files found in database")
+                    return
+
+                logger.info(f"Found {len(tracked_files)} tracked files")
+                changed_count = 0
+
+                for raw_log in tracked_files:
+                    file_path = Path(raw_log.file_path)
+
+                    if not file_path.exists():
+                        logger.debug(f"Tracked file no longer exists: {file_path.name}")
+                        continue
+
+                    # Detect change type
+                    change_type = detect_file_change_type(
+                        file_path,
+                        raw_log.last_processed_offset or 0,
+                        raw_log.file_size_bytes or 0,
+                        raw_log.partial_hash,
+                    )
+
+                    if change_type == ChangeType.UNCHANGED:
+                        logger.debug(f"No changes: {file_path.name}")
+                        continue
+
+                    logger.info(
+                        f"Startup scan detected {change_type.value}: {file_path.name}"
+                    )
+                    changed_count += 1
+
+                    # Process file using existing handler
+                    # This will handle both incremental and full reparse
+                    self.event_handler._process_file(file_path)
+
+                logger.info(
+                    f"Startup scan complete: {changed_count}/{len(tracked_files)} "
+                    f"files changed"
+                )
+
+        except Exception as e:
+            logger.error(f"Startup scan failed: {e}", exc_info=True)
+            # Don't fail daemon startup on scan error
 
     def _retry_loop(self) -> None:
         """Background thread that retries failed files."""

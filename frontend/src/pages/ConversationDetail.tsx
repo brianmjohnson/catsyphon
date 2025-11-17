@@ -19,6 +19,7 @@ export default function ConversationDetail() {
     queryFn: () => getConversation(id!),
     enabled: !!id,
     refetchInterval: 15000, // Auto-refresh every 15 seconds
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
     placeholderData: (previousData) => previousData, // Show cached data while refetching
   });
 

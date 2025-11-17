@@ -87,6 +87,28 @@ class RawLogRepository(BaseRepository[RawLog]):
         """
         return self.session.query(RawLog).filter(RawLog.file_path == file_path).first()
 
+    def get_files_in_directory(self, directory: str) -> List[RawLog]:
+        """
+        Get all raw logs with file_path under the given directory.
+
+        Used by watch daemon startup scan to detect files that changed
+        during downtime.
+
+        Args:
+            directory: Directory path (will match any file_path starting with this)
+
+        Returns:
+            List of RawLog instances in the directory
+        """
+        # Ensure directory path ends with separator for proper matching
+        search_pattern = directory.rstrip("/") + "/%"
+        return (
+            self.session.query(RawLog)
+            .filter(RawLog.file_path.like(search_pattern))
+            .order_by(RawLog.imported_at.desc())
+            .all()
+        )
+
     def exists_by_file_hash(self, file_hash: str) -> bool:
         """
         Check if a raw log with the given file hash exists.

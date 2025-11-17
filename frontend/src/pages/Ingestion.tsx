@@ -778,6 +778,7 @@ function LiveActivityTab() {
     queryKey: ['watchStatus'],
     queryFn: getWatchStatus,
     refetchInterval: 5000, // Auto-refresh every 5 seconds
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
   });
 
   // Fetch ingestion stats with auto-refresh every 10 seconds
@@ -785,6 +786,7 @@ function LiveActivityTab() {
     queryKey: ['ingestionStats'],
     queryFn: getIngestionStats,
     refetchInterval: 10000,
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
   });
 
   // Fetch recent jobs with auto-refresh every 5 seconds
@@ -792,6 +794,7 @@ function LiveActivityTab() {
     queryKey: ['recentIngestionJobs'],
     queryFn: () => getIngestionJobs({ limit: 50 }),
     refetchInterval: 5000,
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
   });
 
   const isLoading = isLoadingStatus || isLoadingStats || isLoadingJobs;

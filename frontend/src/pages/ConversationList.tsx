@@ -43,6 +43,7 @@ export default function ConversationList() {
     placeholderData: (previousData) => previousData, // Show cached data while refetching
     refetchOnMount: false, // Don't refetch when navigating back to this page
     refetchInterval: 15000, // Auto-refresh every 15 seconds
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
   });
 
   const secondsUntilRefresh = useRefreshCountdown(15000, dataUpdatedAt);

@@ -12,6 +12,7 @@ export default function Dashboard() {
     queryKey: ['stats', 'overview'],
     queryFn: () => getOverviewStats(),
     refetchInterval: 15000, // Auto-refresh every 15 seconds for live dashboard
+    staleTime: 0, // Always fetch fresh data - override global 5min staleTime
   });
 
   if (isLoading) {
