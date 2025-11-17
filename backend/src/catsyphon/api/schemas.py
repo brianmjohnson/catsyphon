@@ -342,6 +342,7 @@ class IngestionStatsResponse(BaseModel):
     by_source_type: dict[str, int]
     avg_processing_time_ms: Optional[float] = None
     incremental_jobs: int
+    incremental_percentage: float
 
 
 # ===== Setup / Onboarding Schemas =====
