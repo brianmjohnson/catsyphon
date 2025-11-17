@@ -558,3 +558,181 @@ class TestGetConversationMessages:
         # Should be ordered by sequence (which corresponds to chronological order)
         sequences = [msg["sequence"] for msg in data]
         assert sequences == sorted(sequences)
+
+
+class TestTagConversation:
+    """Tests for POST /conversations/{id}/tag endpoint."""
+
+    def test_tag_conversation_success(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+        sample_conversation: Conversation,
+        sample_epoch: Epoch,
+        mock_openai_api_key,
+    ):
+        """Test successfully tagging a conversation."""
+        repo = MessageRepository(db_session)
+
+        # Clear any existing tags from fixture
+        sample_conversation.tags = {}
+        db_session.commit()
+
+        # Create at least 2 messages (minimum required)
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="user",
+            content="I need help with a bug in my code",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+        )
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="assistant",
+            content="Sure! Let me help you debug that.",
+            timestamp=datetime.now(UTC) + timedelta(seconds=1),
+            sequence=1,
+        )
+        db_session.commit()
+
+        # Update conversation message_count
+        sample_conversation.message_count = 2
+        db_session.commit()
+
+        # Tag the conversation
+        response = api_client.post(f"/conversations/{sample_conversation.id}/tag")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should have tags populated
+        assert "tags" in data
+        assert data["tags"] is not None
+
+    def test_tag_conversation_too_short(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+        sample_conversation: Conversation,
+        sample_epoch: Epoch,
+    ):
+        """Test tagging a conversation with too few messages."""
+        # Clear any existing tags from fixture
+        sample_conversation.tags = {}
+        # Ensure conversation has only 1 message (below minimum)
+        sample_conversation.message_count = 1
+        db_session.commit()
+
+        response = api_client.post(f"/conversations/{sample_conversation.id}/tag")
+
+        assert response.status_code == 400
+        assert "too short" in response.json()["detail"].lower()
+
+    def test_tag_conversation_already_tagged(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+        sample_conversation: Conversation,
+        sample_epoch: Epoch,
+    ):
+        """Test tagging a conversation that already has tags."""
+        # Add existing tags
+        sample_conversation.tags = {"intent": "bug_fix", "outcome": "success"}
+        sample_conversation.message_count = 2
+        db_session.commit()
+
+        response = api_client.post(f"/conversations/{sample_conversation.id}/tag")
+
+        assert response.status_code == 400
+        assert "already tagged" in response.json()["detail"].lower()
+
+    def test_tag_conversation_force_retag(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+        sample_conversation: Conversation,
+        sample_epoch: Epoch,
+        mock_openai_api_key,
+    ):
+        """Test force retagging a conversation that already has tags."""
+        repo = MessageRepository(db_session)
+
+        # Clear existing messages and add 2 new ones
+        db_session.query(Message).filter(
+            Message.conversation_id == sample_conversation.id
+        ).delete()
+
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="user",
+            content="I need help with a bug",
+            timestamp=datetime.now(UTC),
+            sequence=0,
+        )
+        repo.create_message(
+            epoch_id=sample_epoch.id,
+            conversation_id=sample_conversation.id,
+            role="assistant",
+            content="Let me help you",
+            timestamp=datetime.now(UTC) + timedelta(seconds=1),
+            sequence=1,
+        )
+        db_session.commit()
+
+        # Add existing tags
+        sample_conversation.tags = {"intent": "old_intent"}
+        sample_conversation.message_count = 2
+        db_session.commit()
+
+        # Force retag
+        response = api_client.post(
+            f"/conversations/{sample_conversation.id}/tag?force=true"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should have updated tags
+        assert "tags" in data
+        assert data["tags"] is not None
+
+    def test_tag_conversation_not_found(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+    ):
+        """Test tagging a non-existent conversation."""
+        fake_id = uuid.uuid4()
+        response = api_client.post(f"/conversations/{fake_id}/tag")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_tag_conversation_no_api_key(
+        self,
+        api_client: TestClient,
+        db_session: Session,
+        sample_conversation: Conversation,
+        sample_epoch: Epoch,
+        monkeypatch,
+    ):
+        """Test tagging when OpenAI API key is not configured."""
+        # Import settings and set API key to None
+        import catsyphon.config
+
+        # Patch the settings object before importing the router
+        mock_settings = catsyphon.config.settings
+        monkeypatch.setattr(mock_settings, "openai_api_key", None)
+
+        # Ensure conversation has enough messages and no tags
+        sample_conversation.message_count = 2
+        sample_conversation.tags = {}
+        db_session.commit()
+
+        response = api_client.post(f"/conversations/{sample_conversation.id}/tag")
+
+        assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"].lower()

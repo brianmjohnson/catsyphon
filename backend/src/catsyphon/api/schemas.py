@@ -58,6 +58,7 @@ class MessageResponse(BaseModel):
     id: UUID
     role: str
     content: str
+    thinking_content: Optional[str] = None
     timestamp: datetime
     sequence: int
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)

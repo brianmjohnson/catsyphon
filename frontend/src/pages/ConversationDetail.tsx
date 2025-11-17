@@ -2,10 +2,11 @@
  * Conversation Detail page - Full conversation with messages.
  */
 
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { getConversation } from '@/lib/api';
+import { Loader2, Sparkles } from 'lucide-react';
+import { getConversation, tagConversation } from '@/lib/api';
 import { groupFilesByPath } from '@/lib/utils';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useRefreshCountdown } from '@/hooks/useRefreshCountdown';
@@ -28,6 +29,31 @@ export default function ConversationDetail() {
     if (!conversation?.files_touched) return [];
     return groupFilesByPath(conversation.files_touched);
   }, [conversation?.files_touched]);
+
+  // Tagging mutation setup
+  const queryClient = useQueryClient();
+  const [tagError, setTagError] = useState<string | null>(null);
+
+  const tagMutation = useMutation({
+    mutationFn: ({ conversationId, force }: { conversationId: string; force: boolean }) =>
+      tagConversation(conversationId, force),
+    onSuccess: (data) => {
+      // Update cached conversation data
+      queryClient.setQueryData(['conversation', id], data);
+      setTagError(null);
+    },
+    onError: (error: Error) => {
+      setTagError(error.message || 'Failed to tag conversation');
+    },
+  });
+
+  const hasTags = conversation?.conversation_tags && conversation.conversation_tags.length > 0;
+
+  const handleTagClick = () => {
+    if (!id) return;
+    setTagError(null);
+    tagMutation.mutate({ conversationId: id, force: Boolean(hasTags) });
+  };
 
   if (isLoading) {
     return (
@@ -123,6 +149,15 @@ export default function ConversationDetail() {
         </div>
         <p className="text-sm text-muted-foreground font-mono">{conversation.id}</p>
       </div>
+
+      {/* Tagging Error Display */}
+      {tagError && (
+        <div className="bg-destructive/10 border border-destructive rounded-lg p-4 mb-6">
+          <p className="text-destructive text-sm">
+            <strong>Tagging Error:</strong> {tagError}
+          </p>
+        </div>
+      )}
 
       {/* Metadata Card */}
       <div className="bg-card border border-border rounded-lg p-6 mb-6">
@@ -411,9 +446,29 @@ export default function ConversationDetail() {
       )}
 
       {/* Tags Section */}
-      {conversation.conversation_tags && conversation.conversation_tags.length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">Tags</h2>
+      <div className="bg-card border border-border rounded-lg p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Tags</h2>
+          <button
+            onClick={handleTagClick}
+            disabled={tagMutation.isPending}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+          >
+            {tagMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {hasTags ? 'Retagging...' : 'Tagging...'}
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                {hasTags ? 'Retag' : 'Tag Conversation'}
+              </>
+            )}
+          </button>
+        </div>
+
+        {hasTags ? (
           <div className="flex flex-wrap gap-2">
             {conversation.conversation_tags.map((tag) => (
               <div
@@ -430,8 +485,12 @@ export default function ConversationDetail() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            No tags yet. Click "Tag Conversation" to analyze this conversation with AI.
+          </p>
+        )}
+      </div>
 
       {/* Message Timeline */}
       <div className="bg-card border border-border rounded-lg p-6">
@@ -479,6 +538,21 @@ export default function ConversationDetail() {
                     {message.content}
                   </pre>
                 </div>
+
+                {/* Thinking Content */}
+                {message.thinking_content && (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-sm font-medium text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-2">
+                      <span>💭</span>
+                      <span>Extended Thinking</span>
+                    </summary>
+                    <div className="mt-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3 rounded-md">
+                      <pre className="text-xs overflow-x-auto whitespace-pre-wrap text-amber-900 dark:text-amber-100">
+                        {message.thinking_content}
+                      </pre>
+                    </div>
+                  </details>
+                )}
 
                 {/* Tool Calls */}
                 {message.tool_calls && message.tool_calls.length > 0 && (

@@ -34,6 +34,7 @@ export interface MessageResponse {
   id: string;
   role: string;
   content: string;
+  thinking_content: string | null;
   timestamp: string;
   sequence: number;
   tool_calls: Array<Record<string, any>>;

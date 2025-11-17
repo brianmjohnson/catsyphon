@@ -552,3 +552,39 @@ def mock_observer():
     mock_obs.schedule.return_value = None
     mock_obs.unschedule.return_value = None
     return mock_obs
+
+
+@pytest.fixture
+def mock_openai_api_key(monkeypatch):
+    """
+    Mock OpenAI API key for tagging tests.
+
+    Sets a fake API key and mocks the OpenAI client to avoid actual API calls.
+    This allows testing the tagging endpoint without making real OpenAI requests.
+    """
+    from unittest.mock import Mock
+
+    from catsyphon.config import settings
+
+    # Set fake API key
+    monkeypatch.setattr(settings, "openai_api_key", "sk-fake-test-key-12345")
+
+    # Mock the OpenAI client to avoid real API calls
+    mock_client = Mock()
+    mock_completion = Mock()
+    mock_completion.choices = [
+        Mock(
+            message=Mock(
+                content='{"intent": "bug_fix", "outcome": "success", '
+                '"sentiment": "positive", "sentiment_score": 0.8, '
+                '"features": ["debugging"], "problems": []}'
+            )
+        )
+    ]
+    mock_client.chat.completions.create.return_value = mock_completion
+
+    # Patch the OpenAI class to return our mock
+    from unittest.mock import patch
+
+    with patch("catsyphon.tagging.llm_tagger.OpenAI", return_value=mock_client):
+        yield

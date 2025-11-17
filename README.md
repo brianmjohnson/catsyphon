@@ -147,17 +147,14 @@ uv run catsyphon --help
 # Start API server
 uv run catsyphon serve
 
-# Ingest conversation logs
+# Ingest conversation logs (one-time batch processing)
 uv run catsyphon ingest path/to/logs --project "my-project"
 
-# Watch directory for live ingestion
-uv run catsyphon watch path/to/logs --project "my-project"
+# Ingest with AI tagging
+uv run catsyphon ingest path/to/logs --enable-tagging
 
-# Watch with verbose logging (includes SQL queries)
-uv run catsyphon watch path/to/logs --verbose
-
-# Check database status
-uv run catsyphon db-status
+# For live directory watching and database status, use the Web UI
+# Navigate to http://localhost:8000 after starting the server
 ```
 
 **Option B: Direct API Server**

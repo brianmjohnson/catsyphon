@@ -475,6 +475,9 @@ class Message(Base):
         String(50), nullable=False
     )  # 'user', 'assistant', 'system'
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    thinking_content: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # Claude's extended thinking (internal reasoning)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)  # order within epoch
 

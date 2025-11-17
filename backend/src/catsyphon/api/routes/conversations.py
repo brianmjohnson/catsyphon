@@ -17,9 +17,12 @@ from catsyphon.api.schemas import (
     ConversationListResponse,
     MessageResponse,
 )
+from catsyphon.config import settings
 from catsyphon.db.connection import get_db
 from catsyphon.db.repositories import ConversationRepository, MessageRepository, WorkspaceRepository
 from catsyphon.models.db import Conversation
+from catsyphon.models.parsed import ParsedConversation, ParsedMessage
+from catsyphon.tagging.pipeline import TaggingPipeline
 
 router = APIRouter()
 
@@ -256,3 +259,111 @@ async def get_conversation_messages(
     )
 
     return [MessageResponse.model_validate(m) for m in messages]
+
+
+@router.post("/{conversation_id}/tag", response_model=ConversationDetail)
+async def tag_conversation(
+    conversation_id: UUID,
+    force: bool = Query(False, description="Force retagging even if tags already exist"),
+    session: Session = Depends(get_db),
+) -> ConversationDetail:
+    """
+    Tag or retag a conversation using AI analysis.
+
+    This endpoint runs the tagging pipeline (rule-based + LLM) on a conversation
+    and updates its tags. By default, it only tags conversations that haven't been
+    tagged yet. Use force=true to retag existing conversations.
+
+    **Minimum Requirements:**
+    - Conversation must have at least 2 messages (1 user + 1 assistant)
+
+    **Tagging Fields:**
+    - intent: What the user was trying to accomplish
+    - outcome: Result of the conversation
+    - sentiment: Overall emotional tone
+    - sentiment_score: Numeric sentiment (-1.0 to 1.0)
+    - features: List of features discussed
+    - problems: List of problems encountered
+    - has_errors: Whether errors were detected
+    - tools_used: List of tools invoked
+
+    Returns the updated conversation with tags.
+    """
+    # Get conversation with relations
+    conv_repo = ConversationRepository(session)
+    workspace_id = _get_default_workspace_id(session)
+
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conv_repo.get_with_relations(conversation_id, workspace_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Check if already tagged (unless force=true)
+    if not force and conversation.tags:
+        raise HTTPException(
+            status_code=400,
+            detail="Conversation already tagged. Use force=true to retag.",
+        )
+
+    # Validate minimum message count
+    MIN_MESSAGES = 2
+    if conversation.message_count < MIN_MESSAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Conversation too short to tag. Minimum {MIN_MESSAGES} messages required (found {conversation.message_count}).",
+        )
+
+    # Convert database conversation to ParsedConversation for tagging pipeline
+    parsed_messages = [
+        ParsedMessage(
+            role=msg.role,
+            content=msg.content,
+            timestamp=msg.timestamp,
+            thinking_content=msg.thinking_content,
+        )
+        for msg in conversation.messages
+    ]
+
+    parsed = ParsedConversation(
+        agent_type=conversation.agent_type,
+        agent_version=conversation.agent_version,
+        start_time=conversation.start_time,
+        end_time=conversation.end_time,
+        messages=parsed_messages,
+        session_id=conversation.extra_data.get("session_id"),
+        git_branch=conversation.extra_data.get("git_branch"),
+        working_directory=conversation.extra_data.get("working_directory"),
+        metadata=conversation.extra_data,
+    )
+
+    # Run tagging pipeline
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Tagging service unavailable. OpenAI API key not configured.",
+        )
+
+    pipeline = TaggingPipeline(
+        openai_api_key=settings.openai_api_key,
+        openai_model=settings.openai_model,
+        cache_dir=settings.tagging_cache_dir,
+        cache_ttl_days=settings.tagging_cache_ttl_days,
+        enable_cache=settings.tagging_enable_cache and not force,  # Disable cache when forcing
+    )
+
+    try:
+        tags = pipeline.tag_conversation(parsed)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Tagging failed: {str(e)}",
+        )
+
+    # Update conversation with tags
+    conversation.tags = tags
+    session.commit()
+    session.refresh(conversation)
+
+    return _conversation_to_detail(conversation)

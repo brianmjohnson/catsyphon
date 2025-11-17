@@ -9,6 +9,7 @@ import pytest
 from catsyphon.parsers.utils import (
     build_message_tree,
     extract_text_content,
+    extract_thinking_content,
     match_tool_calls_with_results,
     parse_iso_timestamp,
     safe_get_nested,
@@ -248,6 +249,82 @@ class TestExtractTextContent:
         result = extract_text_content(None)
 
         assert result == ""
+
+
+class TestExtractThinkingContent:
+    """Tests for extract_thinking_content function."""
+
+    def test_extract_from_array_with_thinking(self):
+        """Test extracting thinking content from array."""
+        content = [
+            {"type": "thinking", "thinking": "Let me analyze this..."},
+            {"type": "text", "text": "Here's my answer"},
+        ]
+        result = extract_thinking_content(content)
+
+        assert result == "Let me analyze this..."
+
+    def test_extract_multiple_thinking_blocks(self):
+        """Test extracting multiple thinking blocks."""
+        content = [
+            {"type": "thinking", "thinking": "First thought"},
+            {"type": "text", "text": "Some text"},
+            {"type": "thinking", "thinking": "Second thought"},
+        ]
+        result = extract_thinking_content(content)
+
+        assert "First thought" in result
+        assert "Second thought" in result
+        # Multiple thinking blocks should be joined with double newlines
+        assert "\n\n" in result
+
+    def test_extract_ignores_non_thinking_items(self):
+        """Test that non-thinking items are ignored."""
+        content = [
+            {"type": "text", "text": "Hello"},
+            {"type": "thinking", "thinking": "Thinking content"},
+            {"type": "tool_use", "id": "tool_001"},
+        ]
+        result = extract_thinking_content(content)
+
+        assert result == "Thinking content"
+        assert "Hello" not in result
+        assert "tool_001" not in result
+
+    def test_extract_from_string_returns_none(self):
+        """Test that string content returns None."""
+        content = "Just a string"
+        result = extract_thinking_content(content)
+
+        assert result is None
+
+    def test_extract_from_empty_array_returns_none(self):
+        """Test extracting from empty array returns None."""
+        content = []
+        result = extract_thinking_content(content)
+
+        assert result is None
+
+    def test_extract_from_array_without_thinking_returns_none(self):
+        """Test that array without thinking blocks returns None."""
+        content = [
+            {"type": "text", "text": "Hello"},
+            {"type": "tool_use", "id": "tool_001"},
+        ]
+        result = extract_thinking_content(content)
+
+        assert result is None
+
+    def test_extract_ignores_empty_thinking_blocks(self):
+        """Test that empty thinking blocks are ignored."""
+        content = [
+            {"type": "thinking", "thinking": ""},
+            {"type": "thinking", "thinking": "Valid content"},
+            {"type": "thinking"},  # Missing thinking field
+        ]
+        result = extract_thinking_content(content)
+
+        assert result == "Valid content"
 
 
 class TestSafeGetNested:

@@ -27,6 +27,7 @@ from catsyphon.parsers.incremental import (
 from catsyphon.parsers.metadata import ParserCapability, ParserMetadata
 from catsyphon.parsers.utils import (
     extract_text_content,
+    extract_thinking_content,
     match_tool_calls_with_results,
     parse_iso_timestamp,
 )
@@ -490,6 +491,11 @@ class ClaudeCodeParser:
         # Extract text content
         text_content = extract_text_content(content)
 
+        # Extract thinking content (assistant messages only)
+        thinking_content = None
+        if role == "assistant":
+            thinking_content = extract_thinking_content(content)
+
         # Extract model info (assistant messages only)
         model = message.get("model")
 
@@ -520,6 +526,7 @@ class ClaudeCodeParser:
             model=model,
             tool_calls=tool_calls,
             token_usage=token_usage,
+            thinking_content=thinking_content,
         )
 
     def _extract_tool_call(

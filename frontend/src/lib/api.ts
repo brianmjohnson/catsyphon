@@ -106,6 +106,20 @@ export async function getConversationMessages(
   );
 }
 
+export async function tagConversation(
+  id: string,
+  force = false
+): Promise<ConversationDetail> {
+  const params = new URLSearchParams();
+  if (force) params.append('force', 'true');
+
+  const query = params.toString();
+  return apiFetch<ConversationDetail>(
+    `/conversations/${id}/tag${query ? `?${query}` : ''}`,
+    { method: 'POST' }
+  );
+}
+
 // ===== Metadata Endpoints =====
 
 export async function getProjects(): Promise<ProjectResponse[]> {

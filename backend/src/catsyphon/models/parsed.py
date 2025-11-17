@@ -45,6 +45,7 @@ class ParsedMessage:
     entities: dict = field(default_factory=dict)
     model: Optional[str] = None  # Claude model used (for assistant messages)
     token_usage: Optional[dict] = None  # Token usage statistics
+    thinking_content: Optional[str] = None  # Extended thinking blocks (Claude)
 
 
 @dataclass

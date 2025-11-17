@@ -129,6 +129,41 @@ def extract_text_content(content: Any) -> str:
     return ""
 
 
+def extract_thinking_content(content: Any) -> Optional[str]:
+    """
+    Extract thinking content from a message's content field.
+
+    Thinking blocks are Claude's extended thinking feature that shows
+    internal reasoning before responding. They appear as type: "thinking"
+    content blocks in assistant messages.
+
+    Args:
+        content: The message content (string or array)
+
+    Returns:
+        Extracted thinking content, or None if none found
+
+    Example:
+        >>> content = [
+        ...     {"type": "thinking", "thinking": "Let me analyze this..."},
+        ...     {"type": "text", "text": "Here's my answer"}
+        ... ]
+        >>> extract_thinking_content(content)
+        "Let me analyze this..."
+    """
+    if not isinstance(content, list):
+        return None
+
+    thinking_parts = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "thinking":
+            thinking_text = item.get("thinking", "")
+            if thinking_text:
+                thinking_parts.append(thinking_text)
+
+    return "\n\n".join(thinking_parts) if thinking_parts else None
+
+
 def safe_get_nested(
     data: dict[str, Any], *keys: str, default: Any = None
 ) -> Optional[Any]:

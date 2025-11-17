@@ -1,13 +1,12 @@
 """
 CatSyphon CLI - Main command-line interface for CatSyphon.
 
-Provides commands for ingesting conversation logs, running the API server,
-and managing the database.
+Minimal CLI providing essential commands for automation and server management.
+For interactive features, use the web UI.
 """
 
 import typer
 from rich.console import Console
-from rich.table import Table
 
 app = typer.Typer(
     name="catsyphon",
@@ -16,12 +15,6 @@ app = typer.Typer(
 )
 
 console = Console()
-
-
-@app.command()
-def version() -> None:
-    """Show CatSyphon version."""
-    console.print("[bold green]CatSyphon v0.1.0[/bold green]")
 
 
 @app.command()
@@ -206,35 +199,6 @@ def serve(
         port=port,
         reload=reload,
     )
-
-
-@app.command()
-def db_init() -> None:
-    """Initialize the database (run migrations)."""
-    console.print("[bold blue]Initializing database...[/bold blue]")
-
-    # TODO: Run Alembic migrations
-    console.print("[yellow]⚠ Database initialization not yet implemented[/yellow]")
-    console.print("  Hint: Use 'alembic upgrade head' to run migrations")
-
-
-@app.command()
-def db_status() -> None:
-    """Show database status and statistics."""
-    console.print("[bold blue]Database Status[/bold blue]\n")
-
-    # TODO: Query database for stats
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Metric")
-    table.add_column("Value", justify="right")
-
-    table.add_row("Conversations", "0")
-    table.add_row("Messages", "0")
-    table.add_row("Developers", "0")
-    table.add_row("Projects", "0")
-
-    console.print(table)
-    console.print("\n[yellow]⚠ Database queries not yet implemented[/yellow]")
 
 
 if __name__ == "__main__":

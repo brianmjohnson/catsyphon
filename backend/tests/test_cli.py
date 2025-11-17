@@ -15,28 +15,6 @@ from catsyphon.cli import app
 runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
 
 
-class TestVersionCommand:
-    """Tests for version command."""
-
-    def test_version_command_succeeds(self):
-        """Test that version command runs successfully."""
-        result = runner.invoke(app, ["version"])
-
-        assert result.exit_code == 0
-
-    def test_version_shows_version_number(self):
-        """Test that version command shows version number."""
-        result = runner.invoke(app, ["version"])
-
-        assert "0.1.0" in result.stdout
-
-    def test_version_shows_catsyphon_name(self):
-        """Test that version command shows CatSyphon name."""
-        result = runner.invoke(app, ["version"])
-
-        assert "CatSyphon" in result.stdout
-
-
 class TestIngestCommand:
     """Tests for ingest command."""
 
@@ -321,31 +299,6 @@ class TestServeCommand:
 
         args, kwargs = mock_run.call_args
         assert kwargs.get("reload") is True
-
-
-class TestDbCommands:
-    """Tests for database management commands."""
-
-    def test_db_init_command_exists(self):
-        """Test that db-init command exists."""
-        result = runner.invoke(app, ["db-init"])
-
-        # Command should run (even if not implemented)
-        assert result.exit_code == 0
-
-    def test_db_status_command_exists(self):
-        """Test that db-status command exists."""
-        result = runner.invoke(app, ["db-status"])
-
-        # Command should run (even if not implemented)
-        assert result.exit_code == 0
-
-    def test_db_status_shows_table(self):
-        """Test that db-status shows a statistics table."""
-        result = runner.invoke(app, ["db-status"])
-
-        assert "Conversations" in result.stdout
-        assert "Messages" in result.stdout
 
 
 class TestCLIHelp:
