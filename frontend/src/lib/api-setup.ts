@@ -2,8 +2,6 @@
  * API client for setup and onboarding endpoints.
  */
 
-import { API_BASE_URL } from './api';
-
 // ===== Types =====
 
 export interface SetupStatus {
@@ -48,7 +46,7 @@ export interface WorkspaceCreate {
  * Returns setup status including whether onboarding is needed.
  */
 export async function checkSetupStatus(): Promise<SetupStatus> {
-  const response = await fetch(`${API_BASE_URL}/setup/status`);
+  const response = await fetch('/api/setup/status');
 
   if (!response.ok) {
     throw new Error(`Failed to check setup status: ${response.statusText}`);
@@ -66,7 +64,7 @@ export async function checkSetupStatus(): Promise<SetupStatus> {
 export async function createOrganization(
   data: OrganizationCreate
 ): Promise<Organization> {
-  const response = await fetch(`${API_BASE_URL}/setup/organizations`, {
+  const response = await fetch('/api/setup/organizations', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -88,7 +86,7 @@ export async function createOrganization(
  * @returns Array of organizations
  */
 export async function listOrganizations(): Promise<Organization[]> {
-  const response = await fetch(`${API_BASE_URL}/setup/organizations`);
+  const response = await fetch('/api/setup/organizations');
 
   if (!response.ok) {
     throw new Error(`Failed to list organizations: ${response.statusText}`);
@@ -104,7 +102,7 @@ export async function listOrganizations(): Promise<Organization[]> {
  * @returns Organization
  */
 export async function getOrganization(id: string): Promise<Organization> {
-  const response = await fetch(`${API_BASE_URL}/setup/organizations/${id}`);
+  const response = await fetch(`/api/setup/organizations/${id}`);
 
   if (!response.ok) {
     throw new Error(`Failed to get organization: ${response.statusText}`);
@@ -122,7 +120,7 @@ export async function getOrganization(id: string): Promise<Organization> {
 export async function createWorkspace(
   data: WorkspaceCreate
 ): Promise<Workspace> {
-  const response = await fetch(`${API_BASE_URL}/setup/workspaces`, {
+  const response = await fetch('/api/setup/workspaces', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -148,8 +146,8 @@ export async function listWorkspaces(
   organizationId?: string
 ): Promise<Workspace[]> {
   const url = organizationId
-    ? `${API_BASE_URL}/setup/workspaces?organization_id=${organizationId}`
-    : `${API_BASE_URL}/setup/workspaces`;
+    ? `/api/setup/workspaces?organization_id=${organizationId}`
+    : '/api/setup/workspaces';
 
   const response = await fetch(url);
 
@@ -167,7 +165,7 @@ export async function listWorkspaces(
  * @returns Workspace
  */
 export async function getWorkspace(id: string): Promise<Workspace> {
-  const response = await fetch(`${API_BASE_URL}/setup/workspaces/${id}`);
+  const response = await fetch(`/api/setup/workspaces/${id}`);
 
   if (!response.ok) {
     throw new Error(`Failed to get workspace: ${response.statusText}`);
