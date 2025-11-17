@@ -3,6 +3,7 @@ RawLog repository.
 """
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from catsyphon.db.repositories.base import BaseRepository
 from catsyphon.models.db import RawLog
+from catsyphon.parsers.incremental import calculate_partial_hash
 from catsyphon.utils.hashing import calculate_content_hash, calculate_file_hash
 
 
@@ -160,6 +162,48 @@ class RawLogRepository(BaseRepository[RawLog]):
             file_hash=file_hash,
             **kwargs,
         )
+
+    def update_from_file(
+        self,
+        raw_log: RawLog,
+        file_path: Path,
+    ) -> RawLog:
+        """
+        Update existing raw log from file (for full reparse scenarios).
+
+        This is used when a conversation needs to be re-ingested but we want
+        to preserve the existing raw_log record to avoid foreign key constraint
+        violations.
+
+        Args:
+            raw_log: Existing raw log instance to update
+            file_path: Path to original log file
+
+        Returns:
+            Updated raw log instance
+        """
+        # Calculate new file hash
+        file_hash = calculate_file_hash(file_path)
+
+        # Read new file content
+        raw_content = file_path.read_text(encoding="utf-8")
+
+        # Get file size
+        file_size = file_path.stat().st_size
+
+        # Calculate partial hash for the entire file (since we processed all of it)
+        partial_hash = calculate_partial_hash(file_path, file_size)
+
+        # Update raw log fields
+        raw_log.raw_content = raw_content
+        raw_log.file_hash = file_hash
+        raw_log.file_size_bytes = file_size
+        raw_log.last_processed_offset = file_size  # Processed entire file
+        raw_log.partial_hash = partial_hash
+        raw_log.imported_at = datetime.utcnow()
+
+        self.session.flush()
+        return raw_log
 
     def create_from_content(
         self,

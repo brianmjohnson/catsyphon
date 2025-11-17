@@ -248,6 +248,8 @@ def ingest_conversation(
                 # and raw_logs if they exist
 
                 # Delete children explicitly to ensure CASCADE works
+                # NOTE: We do NOT delete RawLog - it will be updated in place
+                # to avoid FK constraint violations
                 session.query(Message).filter(
                     Message.conversation_id == existing_conversation.id
                 ).delete()
@@ -256,9 +258,6 @@ def ingest_conversation(
                 ).delete()
                 session.query(FileTouched).filter(
                     FileTouched.conversation_id == existing_conversation.id
-                ).delete()
-                session.query(RawLog).filter(
-                    RawLog.conversation_id == existing_conversation.id
                 ).delete()
 
                 session.flush()
@@ -494,16 +493,30 @@ def ingest_conversation(
     if parsed.code_changes:
         logger.debug(f"Created {len(parsed.code_changes)} code change file records")
 
-    # Step 8: Store raw log (if file path provided)
+    # Step 8: Store or update raw log (if file path provided)
     raw_log = None
     if file_path:
-        raw_log = raw_log_repo.create_from_file(
-            conversation_id=conversation.id,
-            agent_type=parsed.agent_type,
-            log_format="jsonl",  # Assume JSONL for now
-            file_path=file_path,
-        )
-        logger.debug(f"Stored raw log: {raw_log.id}")
+        # Check if raw_log already exists for this conversation
+        # (happens when update_mode="replace" and we're doing a full reparse)
+        existing_raw_logs = raw_log_repo.get_by_conversation(conversation.id)
+
+        if existing_raw_logs:
+            # Update existing raw_log instead of creating new one
+            # This avoids FK constraint violations
+            raw_log = raw_log_repo.update_from_file(
+                raw_log=existing_raw_logs[0],
+                file_path=file_path,
+            )
+            logger.debug(f"Updated existing raw log: {raw_log.id}")
+        else:
+            # Create new raw_log
+            raw_log = raw_log_repo.create_from_file(
+                conversation_id=conversation.id,
+                agent_type=parsed.agent_type,
+                log_format="jsonl",  # Assume JSONL for now
+                file_path=file_path,
+            )
+            logger.debug(f"Stored raw log: {raw_log.id}")
 
     # Step 9: Update denormalized counts for performance
     total_files = len(parsed.files_touched) + len(parsed.code_changes)
