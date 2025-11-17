@@ -603,13 +603,16 @@ class WatcherDaemon:
 
     def _scan_existing_files(self) -> None:
         """
-        Scan for files tracked in database that changed during downtime.
+        Scan directory for all .jsonl files and process as needed.
+
+        This method handles two scenarios during daemon startup:
+        1. Files already tracked in database - check for changes (APPEND/TRUNCATE/etc)
+        2. Files on disk not yet in database - ingest as new files
 
         Called once during daemon startup to detect changes that occurred
-        while the daemon was not running. Files that have changed are
-        re-processed using incremental or full reparse as appropriate.
+        while the daemon was not running.
         """
-        logger.info(f"Scanning existing files in {self.directory}...")
+        logger.info(f"Scanning directory: {self.directory}...")
 
         from catsyphon.db.connection import db_session
         from catsyphon.db.repositories.raw_log import RawLogRepository
@@ -618,18 +621,34 @@ class WatcherDaemon:
         try:
             with db_session() as session:
                 raw_log_repo = RawLogRepository(session)
+
                 # Resolve symlinks to match how files are stored in database
-                tracked_files = raw_log_repo.get_files_in_directory(
-                    str(self.directory.resolve())
-                )
+                resolved_dir = self.directory.resolve()
 
-                if not tracked_files:
-                    logger.info("No tracked files found in database")
-                    return
+                # PHASE 1: Get all tracked files from database
+                tracked_files = raw_log_repo.get_files_in_directory(str(resolved_dir))
+                tracked_paths = {Path(raw_log.file_path) for raw_log in tracked_files}
 
-                logger.info(f"Found {len(tracked_files)} tracked files")
+                logger.info(f"Found {len(tracked_files)} tracked files in database")
+
+                # PHASE 2: Scan filesystem for all .jsonl files
+                all_jsonl_files = list(resolved_dir.rglob("*.jsonl"))
+                logger.info(f"Found {len(all_jsonl_files)} .jsonl files on disk")
+
+                # PHASE 3: Identify new files not yet tracked
+                new_files = [f for f in all_jsonl_files if f not in tracked_paths]
+
+                if new_files:
+                    logger.info(f"Found {len(new_files)} new files to ingest")
+                    # Process new files asynchronously to avoid blocking daemon startup
+                    # Spawn threads for each file to process them concurrently
+                    for file_path in new_files:
+                        logger.info(f"Startup scan: queueing new file {file_path.name}")
+                        # Use _handle_file_event to process in background thread
+                        self.event_handler._handle_file_event(file_path)
+
+                # PHASE 4: Check tracked files for changes
                 changed_count = 0
-
                 for raw_log in tracked_files:
                     file_path = Path(raw_log.file_path)
 
@@ -659,8 +678,9 @@ class WatcherDaemon:
                     self.event_handler._process_file(file_path)
 
                 logger.info(
-                    f"Startup scan complete: {changed_count}/{len(tracked_files)} "
-                    f"files changed"
+                    f"Startup scan complete: "
+                    f"{len(new_files)} new files ingested, "
+                    f"{changed_count}/{len(tracked_files)} tracked files changed"
                 )
 
         except Exception as e:

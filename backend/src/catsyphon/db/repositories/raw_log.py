@@ -196,6 +196,7 @@ class RawLogRepository(BaseRepository[RawLog]):
 
         # Update raw log fields
         raw_log.raw_content = raw_content
+        raw_log.file_path = str(file_path)  # Update file path (handles file renames)
         raw_log.file_hash = file_hash
         raw_log.file_size_bytes = file_size
         raw_log.last_processed_offset = file_size  # Processed entire file

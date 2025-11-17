@@ -507,7 +507,7 @@ def ingest_conversation(
                 raw_log=existing_raw_logs[0],
                 file_path=file_path,
             )
-            logger.debug(f"Updated existing raw log: {raw_log.id}")
+            logger.debug(f"Updated existing raw log: {raw_log.id} (file_path updated to {file_path.name})")
         else:
             # Create new raw_log
             raw_log = raw_log_repo.create_from_file(

@@ -374,7 +374,7 @@ export default function ConversationList() {
                         {format(new Date(conversation.start_time), 'PPp')}
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        {format(new Date(conversation.updated_at), 'PPp')}
+                        {format(new Date(conversation.end_time), 'PPp')}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {conversation.project?.name || '-'}
