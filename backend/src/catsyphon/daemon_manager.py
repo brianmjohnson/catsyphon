@@ -9,10 +9,11 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from multiprocessing import Process
+from multiprocessing import Process, Queue
+from queue import Empty
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 import psutil
@@ -101,6 +102,7 @@ class DaemonManager:
             health_check_interval: How often to check daemon health (seconds)
         """
         self._daemons: Dict[UUID, DaemonEntry] = {}
+        self._stats_queues: Dict[UUID, "Queue[dict[str, Any]]"] = {}  # config_id -> stats queue
         self._lock = Lock()
         self._shutdown_event = Event()
         self._stats_sync_interval = stats_sync_interval
@@ -229,6 +231,9 @@ class DaemonManager:
         max_retries = extra_config.get("max_retries", 3)
         debounce_seconds = extra_config.get("debounce_seconds", 1.0)
 
+        # Create stats queue for IPC
+        stats_queue: "Queue[dict[str, Any]]" = Queue()
+
         # Create daemon process
         process = Process(
             target=run_daemon_process,
@@ -242,6 +247,7 @@ class DaemonManager:
                 max_retries,
                 debounce_seconds,
                 config.enable_tagging,
+                stats_queue,
             ),
             name=f"watcher-{config_id}",
             daemon=False,  # Not a daemon process - we want clean shutdown
@@ -283,6 +289,7 @@ class DaemonManager:
                 config_id=config_id,
                 pid=pid,
             )
+            self._stats_queues[config_id] = stats_queue
 
         logger.info(
             f"✓ Started daemon for {config.directory} (config {config_id}, PID {pid})"
@@ -323,6 +330,25 @@ class DaemonManager:
         else:
             logger.info(f"✓ Daemon stopped for config {config_id}")
 
+        # Drain stats queue and save final stats
+        if save_stats:
+            with self._lock:
+                stats_queue = self._stats_queues.get(config_id)
+
+            if stats_queue:
+                try:
+                    # Drain all remaining stats from queue
+                    while True:
+                        try:
+                            stats_snapshot = stats_queue.get_nowait()
+                            self._save_daemon_stats(config_id, stats_snapshot)
+                        except Empty:
+                            break  # Queue is empty
+                except Exception as e:
+                    logger.error(
+                        f"Failed to drain stats queue for {config_id}: {e}", exc_info=True
+                    )
+
         # Clear PID from database
         try:
             with db_session() as session:
@@ -336,6 +362,8 @@ class DaemonManager:
         # Remove from tracking
         with self._lock:
             del self._daemons[config_id]
+            if config_id in self._stats_queues:
+                del self._stats_queues[config_id]
 
     def stop_all(self, timeout: float = 10) -> None:
         """
@@ -380,7 +408,7 @@ class DaemonManager:
 
         logger.info("✓ DaemonManager shut down")
 
-    def _format_daemon_status(self, entry: DaemonEntry, config_id: UUID) -> dict:
+    def _format_daemon_status(self, entry: DaemonEntry, config_id: UUID) -> dict[str, Any]:
         """
         Format daemon status dictionary (lock-free helper).
 
@@ -394,6 +422,17 @@ class DaemonManager:
         uptime = (datetime.now() - entry.started_at).total_seconds()
         is_running = entry.process.is_alive() if entry.process else False
         pid_exists = psutil.pid_exists(entry.pid) if entry.pid else False
+
+        # Get stats from database (latest synced values)
+        stats = None
+        try:
+            with db_session() as session:
+                repo = WatchConfigurationRepository(session)
+                config = repo.get(config_id)
+                if config and config.stats:
+                    stats = config.stats
+        except Exception as e:
+            logger.error(f"Failed to fetch stats for {config_id}: {e}", exc_info=True)
 
         return {
             "config_id": str(config_id),
@@ -410,11 +449,10 @@ class DaemonManager:
                     else None
                 ),
             },
-            # Note: Stats are no longer available with multiprocessing architecture
-            # Stats would need to be communicated via Queue or shared memory
+            "stats": stats,  # Stats from database (synced periodically)
         }
 
-    def get_daemon_status(self, config_id: UUID) -> Optional[dict]:
+    def get_daemon_status(self, config_id: UUID) -> Optional[dict[str, Any]]:
         """
         Get runtime status for a specific daemon.
 
@@ -432,7 +470,7 @@ class DaemonManager:
         # Format status outside the lock
         return self._format_daemon_status(entry, config_id)
 
-    def get_all_status(self) -> dict:
+    def get_all_status(self) -> dict[str, Any]:
         """
         Get status for all daemons.
 
@@ -467,21 +505,20 @@ class DaemonManager:
 
         while not self._shutdown_event.is_set():
             try:
-                # Sync stats for all daemons
+                # Get snapshot of config_ids and queues
                 with self._lock:
-                    config_ids = list(self._daemons.keys())
+                    queue_items = list(self._stats_queues.items())
 
-                for config_id in config_ids:
+                # Read stats from all queues (non-blocking)
+                for config_id, stats_queue in queue_items:
                     try:
-                        with self._lock:
-                            if config_id not in self._daemons:
-                                continue
-                            entry = self._daemons[config_id]
-
-                        # TODO: Stats syncing disabled with multiprocessing architecture
-                        # Stats are no longer directly accessible from parent process
-                        # Consider implementing stats communication via Queue or shared memory
-                        # self._save_daemon_stats(config_id, entry)
+                        # Drain all available stats snapshots from queue
+                        while True:
+                            try:
+                                stats_snapshot = stats_queue.get_nowait()
+                                self._save_daemon_stats(config_id, stats_snapshot)
+                            except Empty:
+                                break  # No more stats in queue
                     except Exception as e:
                         logger.error(
                             f"Failed to sync stats for {config_id}: {e}", exc_info=True
@@ -611,6 +648,21 @@ class DaemonManager:
         except Exception as e:
             logger.error(f"Error checking health for {config_id}: {e}", exc_info=True)
 
-    # NOTE: _save_daemon_stats removed - incompatible with multiprocessing architecture
-    # Stats are no longer directly accessible from parent process
-    # TODO: Implement stats communication via Queue or shared memory if needed
+    def _save_daemon_stats(self, config_id: UUID, stats_snapshot: dict[str, Any]) -> None:
+        """
+        Save daemon stats snapshot to database.
+
+        Args:
+            config_id: Watch configuration ID
+            stats_snapshot: Stats dictionary from WatcherStats.to_dict()
+        """
+        try:
+            with db_session() as session:
+                repo = WatchConfigurationRepository(session)
+                repo.update_stats(config_id, stats_snapshot)
+                session.commit()
+                logger.debug(f"Saved stats for config {config_id}: {stats_snapshot}")
+        except Exception as e:
+            logger.error(
+                f"Failed to save stats for {config_id}: {e}", exc_info=True
+            )

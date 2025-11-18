@@ -469,10 +469,11 @@ class TestDaemonManager:
             # Verify it tried to deactivate the failed config
             mock_watch_repo.deactivate.assert_called_once_with(bad_config.id)
 
-    @pytest.mark.skip(reason="Stats syncing disabled in multiprocessing architecture (catsyphon-zyu)")
     @patch("catsyphon.daemon_manager.db_session")
     def test_stats_sync_loop(self, mock_db_session, watch_config):
-        """Test stats sync background thread."""
+        """Test stats sync background thread with Queue-based IPC."""
+        from multiprocessing import Queue
+
         # Mock database
         mock_session = Mock()
         mock_repo = Mock()
@@ -481,6 +482,19 @@ class TestDaemonManager:
 
         manager = DaemonManager(stats_sync_interval=1)  # 1 second interval
         manager.start_daemon(watch_config)
+
+        # Simulate child process pushing stats to queue
+        config_id = watch_config.id
+        if config_id in manager._stats_queues:
+            stats_queue = manager._stats_queues[config_id]
+            test_stats = {
+                "files_processed": 5,
+                "files_skipped": 2,
+                "files_failed": 1,
+                "files_retried": 0,
+                "last_activity": "2025-11-17T21:00:00",
+            }
+            stats_queue.put_nowait(test_stats)
 
         with patch(
             "catsyphon.daemon_manager.WatchConfigurationRepository",
@@ -497,6 +511,10 @@ class TestDaemonManager:
 
             # Verify stats were synced
             assert mock_repo.update_stats.called
+            # Verify stats were saved with correct data
+            call_args = mock_repo.update_stats.call_args
+            assert call_args[0][0] == config_id  # First arg is config_id
+            assert call_args[0][1]["files_processed"] == 5  # Second arg is stats dict
 
     def test_health_check_detects_crashed_daemon(
         self, db_session, sample_workspace, temp_watch_dir
