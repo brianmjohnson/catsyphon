@@ -9,16 +9,19 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from multiprocessing import Process
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Dict, Optional
 from uuid import UUID
 
+import psutil
+
 from catsyphon.db.connection import db_session
 from catsyphon.db.repositories.watch_config import WatchConfigurationRepository
 from catsyphon.db.repositories.workspace import WorkspaceRepository
 from catsyphon.models.db import WatchConfiguration
-from catsyphon.watch import WatcherDaemon
+from catsyphon.watch import run_daemon_process
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +73,9 @@ class RestartPolicy:
 class DaemonEntry:
     """Tracks a running daemon instance."""
 
-    daemon: WatcherDaemon
+    process: Process
     config_id: UUID
-    thread: Thread
+    pid: Optional[int] = None
     started_at: datetime = field(default_factory=datetime.now)
     restart_policy: RestartPolicy = field(default_factory=RestartPolicy)
 
@@ -155,6 +158,30 @@ class DaemonManager:
 
             logger.info(f"Found {len(active_configs)} active configuration(s)")
 
+            # Reconcile PIDs: clear stale PIDs before starting daemons
+            stale_pids_cleared = 0
+            for config in active_configs:
+                if config.daemon_pid is not None:
+                    # Check if PID still exists
+                    if not psutil.pid_exists(config.daemon_pid):
+                        logger.warning(
+                            f"Stale PID {config.daemon_pid} found for config {config.id}, "
+                            "clearing (process was killed externally)"
+                        )
+                        try:
+                            repo.clear_daemon_pid(config.id)
+                            stale_pids_cleared += 1
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to clear stale PID for {config.id}: {e}",
+                                exc_info=True,
+                            )
+
+            if stale_pids_cleared > 0:
+                session.commit()
+                logger.info(f"Cleared {stale_pids_cleared} stale PID(s)")
+
+            # Start daemons for all active configs
             for config in active_configs:
                 try:
                     self.start_daemon(config)
@@ -202,49 +229,64 @@ class DaemonManager:
         max_retries = extra_config.get("max_retries", 3)
         debounce_seconds = extra_config.get("debounce_seconds", 1.0)
 
-        # Create daemon instance
-        daemon = WatcherDaemon(
-            directory=directory,
-            project_name=config.project.name if config.project else None,
-            developer_username=config.developer.username if config.developer else None,
-            poll_interval=poll_interval,
-            retry_interval=retry_interval,
-            max_retries=max_retries,
-            debounce_seconds=debounce_seconds,
-            enable_tagging=config.enable_tagging,
-            config_id=config_id,
+        # Create daemon process
+        process = Process(
+            target=run_daemon_process,
+            args=(
+                config_id,
+                directory,
+                config.project.name if config.project else None,
+                config.developer.username if config.developer else None,
+                poll_interval,
+                retry_interval,
+                max_retries,
+                debounce_seconds,
+                config.enable_tagging,
+            ),
+            name=f"watcher-{config_id}",
+            daemon=False,  # Not a daemon process - we want clean shutdown
         )
 
-        # Start daemon in non-blocking mode
-        daemon.start(blocking=False)
+        # Start process
+        process.start()
 
-        # Create a monitoring thread that tracks the daemon
-        def monitor_thread_target():
-            try:
-                # Just keep the thread alive while daemon is running
-                while daemon.is_running() and not self._shutdown_event.is_set():
-                    time.sleep(1)
-            except Exception as e:
-                logger.error(
-                    f"Monitor thread error for config {config_id}: {e}", exc_info=True
-                )
+        # Wait for process to actually start and get PID
+        time.sleep(0.5)  # Brief wait for process to initialize
 
-        thread = Thread(
-            target=monitor_thread_target,
-            name=f"monitor-{config_id}",
-            daemon=False,  # Not a daemon thread - we want clean shutdown
-        )
-        thread.start()
+        if not process.is_alive():
+            raise Exception("Daemon process failed to start")
+
+        pid = process.pid
+        if pid is None:
+            raise Exception("Daemon process started but PID is None")
+
+        logger.info(f"Daemon process started with PID {pid}")
+
+        # Store PID in database
+        try:
+            with db_session() as session:
+                repo = WatchConfigurationRepository(session)
+                repo.set_daemon_pid(config_id, pid)
+                session.commit()
+                logger.debug(f"Stored PID {pid} in database for config {config_id}")
+        except Exception as e:
+            logger.error(f"Failed to store PID in database: {e}", exc_info=True)
+            # Terminate process if we can't track it
+            process.terminate()
+            process.join(timeout=5)
+            raise
 
         # Track daemon
         with self._lock:
             self._daemons[config_id] = DaemonEntry(
-                daemon=daemon,
+                process=process,
                 config_id=config_id,
-                thread=thread,
+                pid=pid,
             )
 
-        logger.info(f"✓ Started daemon for {config.directory} (config {config_id})")
+        logger.info(
+            f"✓ Started daemon for {config.directory} (config {config_id}, PID {pid})"
+        )
 
     def stop_daemon(self, config_id: UUID, save_stats: bool = True) -> None:
         """
@@ -263,27 +305,33 @@ class DaemonManager:
 
             entry = self._daemons[config_id]
 
-        logger.info(f"Stopping daemon for config {config_id}...")
+        logger.info(f"Stopping daemon for config {config_id} (PID {entry.pid})...")
 
-        # Stop daemon gracefully
-        entry.daemon.stop()
+        # Terminate process gracefully (sends SIGTERM)
+        entry.process.terminate()
 
-        # Wait for thread to finish (with timeout)
-        entry.thread.join(timeout=10)
+        # Wait for process to finish (with timeout)
+        entry.process.join(timeout=10)
 
-        if entry.thread.is_alive():
+        if entry.process.is_alive():
             logger.warning(
-                f"Daemon thread did not stop gracefully for config {config_id}"
+                f"Daemon process did not stop gracefully for config {config_id}, "
+                "sending SIGKILL"
             )
+            entry.process.kill()
+            entry.process.join(timeout=5)
         else:
             logger.info(f"✓ Daemon stopped for config {config_id}")
 
-        # Save final stats if requested
-        if save_stats:
-            try:
-                self._save_daemon_stats(config_id, entry)
-            except Exception as e:
-                logger.error(f"Failed to save final stats: {e}", exc_info=True)
+        # Clear PID from database
+        try:
+            with db_session() as session:
+                repo = WatchConfigurationRepository(session)
+                repo.clear_daemon_pid(config_id)
+                session.commit()
+                logger.debug(f"Cleared PID from database for config {config_id}")
+        except Exception as e:
+            logger.error(f"Failed to clear PID from database: {e}", exc_info=True)
 
         # Remove from tracking
         with self._lock:
@@ -343,23 +391,16 @@ class DaemonManager:
         Returns:
             Status dictionary
         """
-        stats = entry.daemon.stats
         uptime = (datetime.now() - entry.started_at).total_seconds()
+        is_running = entry.process.is_alive() if entry.process else False
+        pid_exists = psutil.pid_exists(entry.pid) if entry.pid else False
 
         return {
             "config_id": str(config_id),
-            "is_running": entry.thread.is_alive(),
+            "is_running": is_running and pid_exists,
+            "pid": entry.pid,
             "uptime_seconds": int(uptime),
             "started_at": entry.started_at.isoformat(),
-            "stats": {
-                "files_processed": stats.files_processed,
-                "files_skipped": stats.files_skipped,
-                "files_failed": stats.files_failed,
-                "files_retried": stats.files_retried,
-                "last_activity": (
-                    stats.last_activity.isoformat() if stats.last_activity else None
-                ),
-            },
             "restart_policy": {
                 "crash_count": entry.restart_policy.crash_count,
                 "restart_attempts": entry.restart_policy.restart_attempts,
@@ -369,7 +410,8 @@ class DaemonManager:
                     else None
                 ),
             },
-            "retry_queue_size": len(entry.daemon.retry_queue),
+            # Note: Stats are no longer available with multiprocessing architecture
+            # Stats would need to be communicated via Queue or shared memory
         }
 
     def get_daemon_status(self, config_id: UUID) -> Optional[dict]:
@@ -436,7 +478,10 @@ class DaemonManager:
                                 continue
                             entry = self._daemons[config_id]
 
-                        self._save_daemon_stats(config_id, entry)
+                        # TODO: Stats syncing disabled with multiprocessing architecture
+                        # Stats are no longer directly accessible from parent process
+                        # Consider implementing stats communication via Queue or shared memory
+                        # self._save_daemon_stats(config_id, entry)
                     except Exception as e:
                         logger.error(
                             f"Failed to sync stats for {config_id}: {e}", exc_info=True
@@ -487,9 +532,19 @@ class DaemonManager:
                     return
                 entry = self._daemons[config_id]
 
-            # Check if thread is alive
-            if not entry.thread.is_alive():
-                logger.warning(f"Daemon crashed for config {config_id}")
+            # Check if process is alive AND PID exists
+            process_alive = entry.process.is_alive()
+            pid_exists = psutil.pid_exists(entry.pid) if entry.pid else False
+
+            if not process_alive or not pid_exists:
+                if not process_alive:
+                    logger.warning(
+                        f"Daemon process crashed for config {config_id} (process not alive)"
+                    )
+                elif not pid_exists:
+                    logger.warning(
+                        f"Daemon process killed externally for config {config_id} (PID {entry.pid} not found)"
+                    )
 
                 # Record crash
                 entry.restart_policy.record_crash()
@@ -501,7 +556,12 @@ class DaemonManager:
                     )
 
                     try:
-                        # Remove dead daemon
+                        # Clear PID and remove dead daemon
+                        with db_session() as session:
+                            repo = WatchConfigurationRepository(session)
+                            repo.clear_daemon_pid(config_id)
+                            session.commit()
+
                         with self._lock:
                             del self._daemons[config_id]
 
@@ -530,11 +590,12 @@ class DaemonManager:
                         "marking as inactive"
                     )
 
-                    # Mark as inactive in DB
+                    # Mark as inactive and clear PID in DB
                     try:
                         with db_session() as session:
                             repo = WatchConfigurationRepository(session)
                             repo.deactivate(config_id)
+                            repo.clear_daemon_pid(config_id)
                             session.commit()
                     except Exception as e:
                         logger.error(
@@ -550,31 +611,6 @@ class DaemonManager:
         except Exception as e:
             logger.error(f"Error checking health for {config_id}: {e}", exc_info=True)
 
-    def _save_daemon_stats(self, config_id: UUID, entry: DaemonEntry) -> None:
-        """
-        Save daemon stats to database.
-
-        Args:
-            config_id: Watch configuration ID
-            entry: Daemon entry with stats
-        """
-        stats = entry.daemon.stats
-        uptime = (datetime.now() - entry.started_at).total_seconds()
-
-        stats_dict = {
-            "started_at": entry.started_at.isoformat(),
-            "files_processed": stats.files_processed,
-            "files_skipped": stats.files_skipped,
-            "files_failed": stats.files_failed,
-            "files_retried": stats.files_retried,
-            "last_activity": (
-                stats.last_activity.isoformat() if stats.last_activity else None
-            ),
-            "uptime_seconds": int(uptime),
-            "crash_count": entry.restart_policy.crash_count,
-        }
-
-        with db_session() as session:
-            repo = WatchConfigurationRepository(session)
-            repo.update_stats(config_id, stats_dict)
-            session.commit()
+    # NOTE: _save_daemon_stats removed - incompatible with multiprocessing architecture
+    # Stats are no longer directly accessible from parent process
+    # TODO: Implement stats communication via Queue or shared memory if needed

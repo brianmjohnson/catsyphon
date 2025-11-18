@@ -180,3 +180,49 @@ class WatchConfigurationRepository(BaseRepository[WatchConfiguration]):
             .filter(WatchConfiguration.workspace_id == workspace_id)
             .count()
         )
+
+    def set_daemon_pid(self, id: uuid.UUID, pid: int) -> Optional[WatchConfiguration]:
+        """
+        Set the daemon PID for a watch configuration.
+
+        Args:
+            id: Configuration UUID
+            pid: Process ID of the running daemon
+
+        Returns:
+            Updated configuration or None
+        """
+        return self.update(id, daemon_pid=pid)
+
+    def clear_daemon_pid(self, id: uuid.UUID) -> Optional[WatchConfiguration]:
+        """
+        Clear the daemon PID for a watch configuration.
+
+        Args:
+            id: Configuration UUID
+
+        Returns:
+            Updated configuration or None
+        """
+        return self.update(id, daemon_pid=None)
+
+    def get_configs_with_pids(
+        self, workspace_id: uuid.UUID
+    ) -> List[WatchConfiguration]:
+        """
+        Get all watch configurations with active PIDs in a workspace.
+
+        Args:
+            workspace_id: Workspace UUID
+
+        Returns:
+            List of configurations with non-null daemon_pid
+        """
+        return (
+            self.session.query(WatchConfiguration)
+            .filter(
+                WatchConfiguration.workspace_id == workspace_id,
+                WatchConfiguration.daemon_pid.isnot(None),
+            )
+            .all()
+        )
