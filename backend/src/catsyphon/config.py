@@ -35,6 +35,30 @@ def get_xdg_cache_dir() -> str:
     return ".catsyphon_cache"
 
 
+def get_xdg_state_dir() -> str:
+    """
+    Get XDG-compliant state directory for CatSyphon logs.
+
+    Follows XDG Base Directory Specification:
+    - Uses $XDG_STATE_HOME/catsyphon if XDG_STATE_HOME is set
+    - Falls back to $HOME/.local/state/catsyphon if not set
+    - Returns relative path ./logs if HOME not available (dev/testing)
+
+    Returns:
+        str: Path to state/logs directory
+    """
+    xdg_state_home = os.getenv("XDG_STATE_HOME")
+    if xdg_state_home:
+        return str(Path(xdg_state_home) / "catsyphon" / "logs")
+
+    home = os.getenv("HOME")
+    if home:
+        return str(Path(home) / ".local" / "state" / "catsyphon" / "logs")
+
+    # Fallback for development/testing environments without HOME
+    return "./logs"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -91,7 +115,30 @@ class Settings(BaseSettings):
 
     # Application
     environment: str = "development"
+
+    # Logging
     log_level: str = "INFO"
+    log_dir: str = ""  # XDG-compliant log directory (defaults to XDG state dir if empty)
+    log_format: str = "standard"  # standard or json
+    log_console_enabled: bool = True  # Enable console (stdout/stderr) logging
+    log_file_enabled: bool = True  # Enable file-based logging
+    log_max_bytes: int = 10_485_760  # 10MB per log file
+    log_backup_count: int = 5  # Keep 5 backup files
+    log_to_stdout: bool = True  # Log INFO/DEBUG to stdout
+    log_to_stderr: bool = True  # Log WARNING/ERROR/CRITICAL to stderr
+
+    # LLM Logging
+    llm_logging_enabled: bool = False  # Enable detailed LLM interaction logging
+    llm_log_requests: bool = True  # Log OpenAI API requests
+    llm_log_responses: bool = True  # Log OpenAI API responses
+    llm_log_tokens: bool = True  # Log token usage statistics
+
+    @property
+    def log_directory(self) -> Path:
+        """Get the log directory path, using XDG default if not specified."""
+        if self.log_dir:
+            return Path(self.log_dir).expanduser()
+        return Path(get_xdg_state_dir())
 
 
 # Global settings instance

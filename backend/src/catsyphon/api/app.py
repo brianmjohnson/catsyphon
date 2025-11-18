@@ -20,6 +20,7 @@ from catsyphon.api.routes import (
     watch,
 )
 from catsyphon.daemon_manager import DaemonManager
+from catsyphon.logging_config import setup_logging
 from catsyphon.startup import run_all_startup_checks
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ async def lifespan(app: FastAPI):
     Ensures critical dependencies (database, migrations) are available.
     Initializes and manages watch daemons.
     """
+    # Initialize logging first
+    setup_logging(context="api")
+
     # Startup: Run all dependency checks
     logger.info("Running startup checks...")
     run_all_startup_checks()

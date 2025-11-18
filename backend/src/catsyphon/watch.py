@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
+from catsyphon.logging_config import setup_logging
+
 # Use PollingObserver on macOS to avoid fsevents C extension crashes
 # See bug catsyphon-7ri: fsevents has thread safety issues that cause
 # "Fatal Python error: Bus error" during rapid observer start/stop cycles
@@ -879,12 +881,8 @@ def run_daemon_process(
         debounce_seconds: Debounce time for file events
         enable_tagging: Whether to enable AI tagging
     """
-    # Setup logging for child process
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler()],
-    )
+    # Setup logging for child process with context-specific log file
+    setup_logging(context="watch", config_id=config_id)
 
     logger.info(
         f"Watch daemon process starting (PID: {os.getpid()}, config: {config_id})"

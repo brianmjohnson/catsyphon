@@ -2,11 +2,13 @@
 
 import json
 import logging
+import time
 from typing import Any
 
 from openai import OpenAI
 
 from catsyphon.models.parsed import ConversationTags, ParsedConversation
+from catsyphon.tagging.llm_logger import llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +92,22 @@ class LLMTagger:
         Returns:
             ConversationTags with LLM-extracted metadata
         """
+        request_id = ""
         try:
             # Build prompt with conversation context
             prompt = self._build_prompt(parsed)
 
-            # Call OpenAI API
+            # Log request (if LLM logging enabled)
+            request_id = llm_logger.log_request(
+                conversation=parsed,
+                model=self.model,
+                prompt=prompt,
+                max_tokens=self.max_tokens,
+                temperature=0.3,
+            )
+
+            # Call OpenAI API with timing
+            start_time = time.time()
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -108,6 +121,14 @@ class LLMTagger:
                 temperature=0.3,  # Lower temperature for more consistent output
                 response_format={"type": "json_object"},
             )
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Log response (if LLM logging enabled)
+            llm_logger.log_response(
+                request_id=request_id,
+                response=response,
+                duration_ms=duration_ms,
+            )
 
             # Parse response
             content = response.choices[0].message.content
@@ -120,6 +141,12 @@ class LLMTagger:
 
         except Exception as e:
             logger.error(f"LLM tagging failed: {e}")
+            # Log error (if LLM logging enabled)
+            llm_logger.log_error(
+                request_id=request_id,
+                error=e,
+                conversation=parsed,
+            )
             return self._fallback_tags()
 
     def _build_prompt(self, parsed: ParsedConversation) -> str:

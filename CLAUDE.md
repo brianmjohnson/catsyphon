@@ -250,9 +250,25 @@ POSTGRES_PASSWORD=catsyphon_dev_password
 
 # Optional
 ENVIRONMENT=development
-LOG_LEVEL=INFO
 API_PORT=8000
 WATCH_POLL_INTERVAL=2
+
+# Logging Configuration
+LOG_LEVEL=INFO                              # DEBUG, INFO, WARNING, ERROR, CRITICAL
+# LOG_DIR=/custom/log/path                  # Leave empty for XDG default (~/.local/state/catsyphon/logs)
+# LOG_FORMAT=standard                       # standard or json (for production/log aggregation)
+# LOG_CONSOLE_ENABLED=true                  # Enable console output
+# LOG_FILE_ENABLED=true                     # Enable file-based logging
+# LOG_MAX_BYTES=10485760                    # 10MB max per log file
+# LOG_BACKUP_COUNT=5                        # Keep 5 backup files when rotating
+# LOG_TO_STDOUT=true                        # Log INFO/DEBUG to stdout
+# LOG_TO_STDERR=true                        # Log WARNING/ERROR/CRITICAL to stderr
+
+# LLM Interaction Logging (for debugging and cost tracking)
+# LLM_LOGGING_ENABLED=false                 # Enable detailed OpenAI API logging
+# LLM_LOG_REQUESTS=true                     # Log API requests
+# LLM_LOG_RESPONSES=true                    # Log API responses
+# LLM_LOG_TOKENS=true                       # Log token usage
 
 # Tagging (optional)
 # Cache directory follows XDG Base Directory spec:
@@ -265,6 +281,43 @@ TAGGING_ENABLE_CACHE=true                   # Enable caching (reduces OpenAI cos
 ```
 
 Managed via Pydantic Settings in `backend/src/catsyphon/config.py`.
+
+### Logging System
+
+CatSyphon uses a centralized logging system with separate log files and configurable output:
+
+**Log File Structure** (XDG-compliant: `~/.local/state/catsyphon/logs`):
+```
+logs/
+├── application.log           # INFO and DEBUG messages
+├── error.log                 # WARNING, ERROR, CRITICAL messages
+├── api-application.log       # API server logs
+├── api-error.log            # API errors
+├── watch-{id}-application.log  # Per-daemon logs
+├── watch-{id}-error.log
+└── llm/
+    └── requests.log          # OpenAI API interactions (when enabled)
+```
+
+**Features**:
+- Automatic log rotation (10MB max, 5 backups)
+- Separate stdout (INFO/DEBUG) and stderr (WARNING+) streams
+- Context-specific log files for watch daemons
+- Optional LLM interaction logging for debugging and cost tracking
+- XDG Base Directory compliant
+
+**LLM Logging**:
+When `LLM_LOGGING_ENABLED=true`, all OpenAI API interactions are logged to `llm/requests.log` with:
+- Request details (model, prompt preview, parameters)
+- Response details (content preview, token usage, timing)
+- Error information for failed requests
+- Cache hits (no API call made)
+
+Example LLM log entry:
+```
+[2025-11-18 13:45:23] [INFO] REQUEST: {"type": "request", "request_id": "test-123_1700318723000", "model": "gpt-4o-mini", "session_id": "test-123", "message_count": 5, "parameters": {"max_tokens": 2000, "temperature": 0.3}, "prompt_length": 1234}
+[2025-11-18 13:45:24] [INFO] RESPONSE: {"type": "response", "request_id": "test-123_1700318723000", "model": "gpt-4o-mini", "finish_reason": "stop", "duration_ms": 1250.5, "tokens": {"prompt": 156, "completion": 89, "total": 245}}
+```
 
 ### Testing Guidelines
 

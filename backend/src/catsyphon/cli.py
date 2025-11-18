@@ -8,6 +8,8 @@ For interactive features, use the web UI.
 import typer
 from rich.console import Console
 
+from catsyphon.logging_config import setup_logging
+
 app = typer.Typer(
     name="catsyphon",
     help="CatSyphon - Coding agent conversation analysis tool",
@@ -46,6 +48,9 @@ def ingest(
 
     from catsyphon.config import settings
     from catsyphon.parsers import get_default_registry
+
+    # Initialize logging
+    setup_logging(context="cli")
 
     # Handle --force flag and deprecation warning
     if force:
