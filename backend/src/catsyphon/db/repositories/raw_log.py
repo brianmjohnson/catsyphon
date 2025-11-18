@@ -153,6 +153,12 @@ class RawLogRepository(BaseRepository[RawLog]):
         # Read file content
         raw_content = file_path.read_text(encoding="utf-8")
 
+        # Get file size
+        file_size = file_path.stat().st_size
+
+        # Calculate partial hash for the entire file (since we processed all of it)
+        partial_hash = calculate_partial_hash(file_path, file_size)
+
         return self.create(
             conversation_id=conversation_id,
             agent_type=agent_type,
@@ -160,6 +166,9 @@ class RawLogRepository(BaseRepository[RawLog]):
             raw_content=raw_content,
             file_path=str(file_path),
             file_hash=file_hash,
+            file_size_bytes=file_size,
+            last_processed_offset=file_size,
+            partial_hash=partial_hash,
             **kwargs,
         )
 
@@ -232,6 +241,9 @@ class RawLogRepository(BaseRepository[RawLog]):
         # Calculate content hash for deduplication
         file_hash = calculate_content_hash(raw_content)
 
+        # Calculate content size in bytes
+        content_size = len(raw_content.encode('utf-8'))
+
         return self.create(
             conversation_id=conversation_id,
             agent_type=agent_type,
@@ -239,6 +251,8 @@ class RawLogRepository(BaseRepository[RawLog]):
             raw_content=raw_content,
             file_path=file_path,
             file_hash=file_hash,
+            file_size_bytes=content_size,
+            last_processed_offset=content_size,
             **kwargs,
         )
 
