@@ -20,6 +20,7 @@ const mockConversations = {
     {
       id: '1',
       start_time: '2025-01-01T10:00:00Z',
+      end_time: '2025-01-01T11:00:00Z',
       updated_at: '2025-01-01T11:00:00Z',
       project: { id: 'proj-1', name: 'Test Project' },
       developer: { id: 'dev-1', username: 'testuser' },
@@ -31,6 +32,7 @@ const mockConversations = {
     {
       id: '2',
       start_time: '2025-01-02T10:00:00Z',
+      end_time: null,
       updated_at: '2025-01-02T11:00:00Z',
       project: { id: 'proj-1', name: 'Test Project' },
       developer: { id: 'dev-2', username: 'otheruser' },
@@ -195,6 +197,7 @@ describe('ConversationList', () => {
         {
           id: '1',
           start_time: '2025-01-01T10:00:00Z',
+          end_time: '2025-01-01T11:00:00Z',
           updated_at: '2025-01-01T11:00:00Z',
           project: { id: 'proj-1', name: 'Test Project' },
           developer: { id: 'dev-1', username: 'testuser' },
@@ -206,6 +209,7 @@ describe('ConversationList', () => {
         {
           id: '2',
           start_time: '2025-01-02T10:00:00Z',
+          end_time: '2025-01-02T11:00:00Z',
           updated_at: '2025-01-02T11:00:00Z',
           project: { id: 'proj-1', name: 'Test Project' },
           developer: { id: 'dev-2', username: 'otheruser' },
@@ -217,6 +221,7 @@ describe('ConversationList', () => {
         {
           id: '3',
           start_time: '2025-01-03T10:00:00Z',
+          end_time: null,
           updated_at: '2025-01-03T11:00:00Z',
           project: { id: 'proj-1', name: 'Test Project' },
           developer: { id: 'dev-3', username: 'thirduser' },
@@ -250,6 +255,7 @@ describe('ConversationList', () => {
         {
           id: '1',
           start_time: '2025-01-01T10:00:00Z',
+          end_time: '2025-01-01T11:00:00Z',
           updated_at: '2025-01-01T11:00:00Z',
           project: { id: 'proj-1', name: 'Test Project' },
           developer: { id: 'dev-1', username: 'testuser' },

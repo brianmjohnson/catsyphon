@@ -213,7 +213,7 @@ describe('Ingestion', () => {
       await userEvent.click(uploadButton);
 
       await waitFor(() => {
-        expect(api.uploadSingleConversationLog).toHaveBeenCalledWith(file);
+        expect(api.uploadSingleConversationLog).toHaveBeenCalledWith(file, 'skip');
       });
     });
   });

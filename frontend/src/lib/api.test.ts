@@ -431,7 +431,7 @@ describe('uploadConversationLogs', () => {
     const result = await uploadConversationLogs([file1, file2]);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      '/api/upload/',
+      '/api/upload/?update_mode=skip',
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
@@ -492,7 +492,7 @@ describe('uploadSingleConversationLog', () => {
     const result = await uploadSingleConversationLog(file);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      '/api/upload/',
+      '/api/upload/?update_mode=skip',
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
