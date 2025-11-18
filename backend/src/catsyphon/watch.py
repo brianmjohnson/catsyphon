@@ -6,6 +6,7 @@ and automatically ingests them into the database using the existing pipeline.
 """
 
 import logging
+import os
 import platform
 import signal
 import sys
@@ -715,3 +716,72 @@ class WatcherDaemon:
             except Exception as e:
                 logger.error(f"Error in retry loop: {e}", exc_info=True)
                 self.shutdown_event.wait(timeout=60)  # Wait a minute before retrying
+
+
+def run_daemon_process(
+    config_id: UUID,
+    directory: Path,
+    project_name: Optional[str],
+    developer_username: Optional[str],
+    poll_interval: int,
+    retry_interval: int,
+    max_retries: int,
+    debounce_seconds: float,
+    enable_tagging: bool,
+) -> None:
+    """
+    Entry point for running WatcherDaemon in a separate process.
+
+    This function is called by multiprocessing.Process and runs the daemon
+    in a completely isolated process with its own Python interpreter.
+
+    Args:
+        config_id: Watch configuration UUID
+        directory: Directory to watch
+        project_name: Project name for ingested conversations
+        developer_username: Developer username for ingested conversations
+        poll_interval: Polling interval for file system observer
+        retry_interval: Interval between retry attempts
+        max_retries: Maximum retry attempts for failed files
+        debounce_seconds: Debounce time for file events
+        enable_tagging: Whether to enable AI tagging
+    """
+    # Setup logging for child process
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
+
+    logger.info(
+        f"Watch daemon process starting (PID: {os.getpid()}, config: {config_id})"
+    )
+
+    # Create daemon instance
+    daemon = WatcherDaemon(
+        directory=directory,
+        project_name=project_name,
+        developer_username=developer_username,
+        poll_interval=poll_interval,
+        retry_interval=retry_interval,
+        max_retries=max_retries,
+        debounce_seconds=debounce_seconds,
+        enable_tagging=enable_tagging,
+        config_id=config_id,
+    )
+
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum: int, frame: Any) -> None:
+        logger.info(f"Process received signal {signum}, shutting down...")
+        daemon.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Run daemon in blocking mode (will run until killed or signaled)
+    try:
+        daemon.start(blocking=True)
+    except Exception as e:
+        logger.error(f"Daemon process crashed: {e}", exc_info=True)
+        sys.exit(1)

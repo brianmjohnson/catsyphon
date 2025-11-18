@@ -43,9 +43,7 @@ class Organization(Base):
     )  # URL-friendly identifier
 
     # Organization settings
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
     # Status
     is_active: Mapped[bool] = mapped_column(
@@ -91,9 +89,7 @@ class Workspace(Base):
     )  # URL-friendly identifier
 
     # Workspace settings
-    settings: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
     # Status
     is_active: Mapped[bool] = mapped_column(
@@ -707,6 +703,9 @@ class WatchConfiguration(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", index=True
     )  # Currently being watched
+    daemon_pid: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )  # Process ID of running daemon (None if stopped)
 
     # Statistics snapshot (from WatcherStats)
     stats: Mapped[dict] = mapped_column(
