@@ -10,10 +10,13 @@ import os
 import platform
 import signal
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from multiprocessing import Queue
 from pathlib import Path
+from queue import Empty
 from threading import Event, Thread
 from typing import TYPE_CHECKING, Any, Optional, Set
 from uuid import UUID
@@ -66,6 +69,19 @@ class WatcherStats:
     files_failed: int = 0
     files_retried: int = 0
     last_activity: Optional[datetime] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert stats to dictionary for serialization."""
+        return {
+            "started_at": self.started_at.isoformat(),
+            "files_processed": self.files_processed,
+            "files_skipped": self.files_skipped,
+            "files_failed": self.files_failed,
+            "files_retried": self.files_retried,
+            "last_activity": (
+                self.last_activity.isoformat() if self.last_activity else None
+            ),
+        }
 
 
 class RetryQueue:
@@ -158,6 +174,7 @@ class FileWatcher(FileSystemEventHandler):
         debounce_seconds: float = 1.0,
         tagging_pipeline: Optional["TaggingPipeline"] = None,
         config_id: Optional[UUID] = None,
+        stats_lock: Optional[threading.Lock] = None,
     ):
         super().__init__()
         self.project_name = project_name
@@ -167,6 +184,7 @@ class FileWatcher(FileSystemEventHandler):
         self.debounce_seconds = debounce_seconds
         self.tagging_pipeline = tagging_pipeline
         self.config_id = config_id  # Watch configuration ID for tracking
+        self._stats_lock = stats_lock or threading.Lock()
 
         # Track files being processed to avoid duplicate events
         self.processing: Set[str] = set()
@@ -263,8 +281,9 @@ class FileWatcher(FileSystemEventHandler):
                             logger.debug(
                                 f"Skipped {file_path.name} (no changes detected)"
                             )
-                            self.stats.files_skipped += 1
-                            self.stats.last_activity = datetime.now()
+                            with self._stats_lock:
+                                self.stats.files_skipped += 1
+                                self.stats.last_activity = datetime.now()
                             return
 
                         elif change_type == ChangeType.APPEND:
@@ -274,8 +293,9 @@ class FileWatcher(FileSystemEventHandler):
                                 self._process_incremental_update(
                                     session, file_path, existing_raw_log
                                 )
-                                self.stats.files_processed += 1
-                                self.stats.last_activity = datetime.now()
+                                with self._stats_lock:
+                                    self.stats.files_processed += 1
+                                    self.stats.last_activity = datetime.now()
                                 return
                             except Exception as e:
                                 # Fall back to full reparse on error
@@ -342,8 +362,9 @@ class FileWatcher(FileSystemEventHandler):
                     logger.info(
                         f"✓ Processed {file_path.name} → conversation {conversation.id}"
                     )
-                    self.stats.files_processed += 1
-                    self.stats.last_activity = datetime.now()
+                    with self._stats_lock:
+                        self.stats.files_processed += 1
+                        self.stats.last_activity = datetime.now()
 
                     # Remove from retry queue if present
                     if self.retry_queue:
@@ -352,14 +373,16 @@ class FileWatcher(FileSystemEventHandler):
                 except DuplicateFileError:
                     # This can happen if file was added to DB by another process
                     logger.debug(f"Skipped {file_path.name} (duplicate detected)")
-                    self.stats.files_skipped += 1
-                    self.stats.last_activity = datetime.now()
+                    with self._stats_lock:
+                        self.stats.files_skipped += 1
+                        self.stats.last_activity = datetime.now()
 
                 except Exception as e:
                     error_msg = f"{type(e).__name__}: {str(e)}"
                     logger.error(f"✗ Failed to process {file_path.name}: {error_msg}")
-                    self.stats.files_failed += 1
-                    self.stats.last_activity = datetime.now()
+                    with self._stats_lock:
+                        self.stats.files_failed += 1
+                        self.stats.last_activity = datetime.now()
 
                     # Add to retry queue
                     if self.retry_queue:
@@ -452,6 +475,7 @@ class WatcherDaemon:
         debounce_seconds: float = 1.0,
         enable_tagging: bool = False,
         config_id: Optional[UUID] = None,
+        stats_queue: Optional["Queue[dict[str, Any]]"] = None,
     ):
         self.directory = directory
         self.project_name = project_name
@@ -461,6 +485,8 @@ class WatcherDaemon:
         self.debounce_seconds = debounce_seconds
         self.enable_tagging = enable_tagging
         self.config_id = config_id
+        self.stats_queue = stats_queue
+        self._stats_lock = threading.Lock()  # Protects stats from concurrent updates
 
         # Initialize tagging pipeline if enabled
         tagging_pipeline = None
@@ -491,6 +517,7 @@ class WatcherDaemon:
             debounce_seconds=debounce_seconds,
             tagging_pipeline=tagging_pipeline,
             config_id=config_id,
+            stats_lock=self._stats_lock,
         )
 
         # Watchdog observer
@@ -500,8 +527,9 @@ class WatcherDaemon:
         # Shutdown event
         self.shutdown_event = Event()
 
-        # Retry thread
+        # Background threads
         self.retry_thread: Optional[Thread] = None
+        self.stats_push_thread: Optional[Thread] = None
 
     def start(self, blocking: bool = True) -> None:
         """
@@ -531,6 +559,12 @@ class WatcherDaemon:
         self.retry_thread = Thread(target=self._retry_loop, daemon=False)
         self.retry_thread.start()
         logger.info("✓ Retry thread started")
+
+        # Start stats push thread if queue is provided
+        if self.stats_queue:
+            self.stats_push_thread = Thread(target=self._stats_push_loop, daemon=False)
+            self.stats_push_thread.start()
+            logger.info("✓ Stats push thread started")
 
         # Main loop - only block if requested
         if blocking:
@@ -564,6 +598,11 @@ class WatcherDaemon:
             self.retry_thread.join(timeout=2)
             logger.info("✓ Retry thread stopped")
 
+        # Wait for stats push thread to finish
+        if self.stats_push_thread and self.stats_push_thread.is_alive():
+            self.stats_push_thread.join(timeout=2)
+            logger.info("✓ Stats push thread stopped")
+
         logger.info("✓ Watch daemon stopped")
 
     def is_running(self) -> bool:
@@ -575,32 +614,63 @@ class WatcherDaemon:
         """
         return self.observer.is_alive() if self.observer else False
 
-    def get_stats_snapshot(self) -> dict:
+    def get_stats_snapshot(self) -> dict[str, Any]:
         """
-        Get current statistics snapshot.
+        Get current statistics snapshot (thread-safe).
 
         Returns:
             Dictionary with current stats
         """
-        return {
-            "started_at": self.stats.started_at.isoformat(),
-            "files_processed": self.stats.files_processed,
-            "files_skipped": self.stats.files_skipped,
-            "files_failed": self.stats.files_failed,
-            "files_retried": self.stats.files_retried,
-            "last_activity": (
-                self.stats.last_activity.isoformat()
-                if self.stats.last_activity
-                else None
-            ),
-            "retry_queue_size": len(self.retry_queue),
-        }
+        with self._stats_lock:
+            return {
+                "started_at": self.stats.started_at.isoformat(),
+                "files_processed": self.stats.files_processed,
+                "files_skipped": self.stats.files_skipped,
+                "files_failed": self.stats.files_failed,
+                "files_retried": self.stats.files_retried,
+                "last_activity": (
+                    self.stats.last_activity.isoformat()
+                    if self.stats.last_activity
+                    else None
+                ),
+                "retry_queue_size": len(self.retry_queue),
+            }
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
         logger.info(f"Received signal {signum}, shutting down...")
         self.stop()
         sys.exit(0)
+
+    def _stats_push_loop(self) -> None:
+        """
+        Background thread that pushes stats to queue every 30 seconds.
+
+        Stats are sent to parent process via multiprocessing.Queue for persistence.
+        """
+        logger.info("Stats push thread started (interval: 30s)")
+
+        while not self.shutdown_event.is_set():
+            try:
+                if self.stats_queue:
+                    # Get thread-safe snapshot of stats
+                    with self._stats_lock:
+                        stats_snapshot = self.stats.to_dict()
+
+                    # Push to queue (non-blocking)
+                    try:
+                        self.stats_queue.put_nowait(stats_snapshot)
+                        logger.debug(f"Pushed stats to queue: {stats_snapshot}")
+                    except Exception as e:
+                        logger.error(f"Failed to push stats to queue: {e}", exc_info=True)
+
+            except Exception as e:
+                logger.error(f"Error in stats push loop: {e}", exc_info=True)
+
+            # Wait 30 seconds before next push
+            self.shutdown_event.wait(timeout=30)
+
+        logger.info("Stats push thread stopped")
 
     def _scan_existing_files(self) -> None:
         """
@@ -708,7 +778,8 @@ class WatcherDaemon:
 
                     # Process the file
                     self.event_handler._process_file(entry.file_path)
-                    self.stats.files_retried += 1
+                    with self._stats_lock:
+                        self.stats.files_retried += 1
 
                 # Sleep for a bit before checking again
                 self.shutdown_event.wait(timeout=self.retry_interval)
@@ -728,6 +799,7 @@ def run_daemon_process(
     max_retries: int,
     debounce_seconds: float,
     enable_tagging: bool,
+    stats_queue: Optional["Queue[dict[str, Any]]"] = None,
 ) -> None:
     """
     Entry point for running WatcherDaemon in a separate process.
@@ -768,6 +840,7 @@ def run_daemon_process(
         debounce_seconds=debounce_seconds,
         enable_tagging=enable_tagging,
         config_id=config_id,
+        stats_queue=stats_queue,
     )
 
     # Setup signal handlers for graceful shutdown
