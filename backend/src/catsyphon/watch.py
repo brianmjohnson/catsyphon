@@ -210,6 +210,21 @@ class FileWatcher(FileSystemEventHandler):
         if not event.is_directory and path.endswith(".jsonl"):
             self._handle_file_event(Path(path))
 
+    def on_moved(self, event: FileSystemEvent) -> None:
+        """Handle file move/rename events."""
+        if event.is_directory:
+            return
+
+        src_path = Path(event.src_path)
+        dest_path = Path(event.dest_path)
+
+        # Only handle .jsonl files
+        if not (src_path.suffix == ".jsonl" or dest_path.suffix == ".jsonl"):
+            return
+
+        # Update database file_path from src to dest
+        self._handle_file_rename(src_path, dest_path)
+
     def _handle_file_event(self, file_path: Path) -> None:
         """
         Handle a file event with debouncing.
@@ -455,6 +470,47 @@ class FileWatcher(FileSystemEventHandler):
             f"✓ Incremental update: {file_path.name} → conversation {conversation.id} "
             f"(+{len(incremental_result.new_messages)} messages)"
         )
+
+    def _handle_file_rename(self, src_path: Path, dest_path: Path) -> None:
+        """
+        Update raw_log.file_path when a file is renamed.
+
+        Args:
+            src_path: Original file path before rename
+            dest_path: New file path after rename
+        """
+        from catsyphon.db.connection import db_session
+        from catsyphon.db.repositories.raw_log import RawLogRepository
+
+        try:
+            with db_session() as session:
+                raw_log_repo = RawLogRepository(session)
+
+                # Find raw_log by old path
+                raw_log = raw_log_repo.get_by_file_path(str(src_path))
+
+                if raw_log:
+                    logger.info(
+                        f"File renamed: {src_path.name} → {dest_path.name}"
+                    )
+                    # Update to new path
+                    raw_log.file_path = str(dest_path)
+                    session.commit()
+
+                    # Process the renamed file to catch any pending changes
+                    self._handle_file_event(dest_path)
+                else:
+                    logger.debug(
+                        f"Rename detected but no raw_log found for {src_path.name}, "
+                        f"treating {dest_path.name} as new file"
+                    )
+                    # Not tracked yet - process as new file
+                    self._handle_file_event(dest_path)
+
+        except Exception as e:
+            logger.error(f"Error handling file rename: {e}")
+            # Fallback: process as new file
+            self._handle_file_event(dest_path)
 
 
 class WatcherDaemon:
