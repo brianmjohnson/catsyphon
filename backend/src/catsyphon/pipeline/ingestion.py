@@ -215,11 +215,27 @@ def ingest_conversation(
     is_update = False
     conversation = None
 
-    # Check for existing conversation by session_id (if provided)
+    # Check for existing conversation by session_id AND conversation_type (if provided)
+    # CRITICAL: Agent conversations share the parent's session_id, so we need to check
+    # BOTH session_id and conversation_type to avoid false duplicates
     if parsed.session_id:
         existing_conversation = conversation_repo.get_by_session_id(
             parsed.session_id, workspace_id
         )
+
+        # Filter to only matching conversation_type (allow main and agent to coexist)
+        # NOTE: Normalize to uppercase for comparison (db has uppercase, parser has lowercase)
+        if (
+            existing_conversation
+            and existing_conversation.conversation_type.upper()
+            != parsed.conversation_type.upper()
+        ):
+            logger.info(
+                f"Found conversation with same session_id but different type: "
+                f"existing={existing_conversation.conversation_type}, new={parsed.conversation_type}. "
+                f"Treating as separate conversations."
+            )
+            existing_conversation = None  # Treat as new conversation
 
         if existing_conversation:
             # Check if this is the SAME file being re-processed
@@ -405,11 +421,16 @@ def ingest_conversation(
     # Step 3: Hierarchical conversation linking (Phase 2: Epic 7u2)
     # If this is an agent/subagent conversation, find the parent conversation
     parent_conversation_id = None
-    if parsed.conversation_type == "agent" and parsed.parent_session_id:
+    # NOTE: Parser returns lowercase "agent" but database stores uppercase "AGENT"
+    # (due to migration using enum key names instead of values)
+    if parsed.conversation_type.lower() == "agent" and parsed.parent_session_id:
+        # Look up parent - it should be the MAIN conversation with this session_id
         parent_conversation = conversation_repo.get_by_session_id(
             parsed.parent_session_id, workspace_id
         )
-        if parent_conversation:
+        # Only link if we found a MAIN conversation (avoid self-reference with agents)
+        # Database has uppercase values, so compare with uppercase
+        if parent_conversation and parent_conversation.conversation_type.upper() == "MAIN":
             parent_conversation_id = parent_conversation.id
             logger.info(
                 f"Linking agent conversation (session_id={parsed.session_id}) "
@@ -417,7 +438,7 @@ def ingest_conversation(
             )
         else:
             logger.warning(
-                f"Parent conversation not found for agent (parent_session_id={parsed.parent_session_id}). "
+                f"Parent MAIN conversation not found for agent (parent_session_id={parsed.parent_session_id}). "
                 f"Agent conversation will be created without parent link."
             )
 

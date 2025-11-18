@@ -330,7 +330,7 @@ class Conversation(Base):
         index=True,
     )
     conversation_type: Mapped[str] = mapped_column(
-        Enum(ConversationType, native_enum=False),
+        Enum(ConversationType, native_enum=False, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         server_default=ConversationType.MAIN.value,
         index=True,

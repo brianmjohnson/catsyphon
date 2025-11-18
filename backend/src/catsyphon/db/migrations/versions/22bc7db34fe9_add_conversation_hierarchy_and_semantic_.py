@@ -29,12 +29,12 @@ def upgrade() -> None:
         sa.Column(
             "conversation_type",
             sa.Enum(
-                "MAIN",
-                "AGENT",
-                "MCP",
-                "SKILL",
-                "COMMAND",
-                "OTHER",
+                "main",
+                "agent",
+                "mcp",
+                "skill",
+                "command",
+                "other",
                 name="conversationtype",
                 native_enum=False,
             ),
