@@ -187,9 +187,10 @@ describe('ProjectDetail', () => {
       const sessionsTab = screen.getByText('Sessions');
       await user.click(sessionsTab);
 
-      // Verify Sessions tab content visible
+      // Verify Sessions tab content visible (kulesh appears twice in mock data)
       await waitFor(() => {
-        expect(screen.getByText('kulesh')).toBeInTheDocument();
+        const kuleshElements = screen.getAllByText('kulesh');
+        expect(kuleshElements.length).toBeGreaterThan(0);
       });
       expect(screen.getByText('sarah')).toBeInTheDocument();
     });
@@ -226,9 +227,10 @@ describe('ProjectDetail', () => {
       // Click Sessions tab
       await user.click(screen.getByText('Sessions'));
 
-      // Wait for content
+      // Wait for content (kulesh appears twice in mock data)
       await waitFor(() => {
-        expect(screen.getByText('kulesh')).toBeInTheDocument();
+        const kuleshElements = screen.getAllByText('kulesh');
+        expect(kuleshElements.length).toBeGreaterThan(0);
       });
 
       // Click back to Stats tab
@@ -238,6 +240,9 @@ describe('ProjectDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('Total Sessions')).toBeInTheDocument();
       });
+      // Verify session count is still displayed
+      expect(screen.getByText('23')).toBeInTheDocument(); // session count
+      expect(screen.getByText('87%')).toBeInTheDocument(); // success rate
     });
   });
 
@@ -372,15 +377,17 @@ describe('ProjectDetail', () => {
       // Click Sessions tab
       await user.click(screen.getByText('Sessions'));
 
+      // Wait for table to render (kulesh appears twice in mock data)
       await waitFor(() => {
-        expect(screen.getByText('kulesh')).toBeInTheDocument();
+        const kuleshElements = screen.getAllByText('kulesh');
+        expect(kuleshElements.length).toBe(2); // session-1 and session-3
       });
 
       expect(screen.getByText('sarah')).toBeInTheDocument();
 
-      // Verify 3 sessions rendered
+      // Verify 3 sessions rendered (header + 3 data rows = 4 total)
       const rows = screen.getAllByRole('row');
-      expect(rows.length).toBeGreaterThanOrEqual(3); // Header + 3 data rows
+      expect(rows.length).toBe(4);
     });
 
     it('should display session status badges', async () => {
@@ -394,14 +401,14 @@ describe('ProjectDetail', () => {
       await user.click(screen.getByText('Sessions'));
 
       await waitFor(() => {
-        // Success status
-        const successBadges = screen.getAllByText(/success/i);
-        expect(successBadges.length).toBeGreaterThan(0);
+        // Completed status (session-1 and session-2)
+        const completedBadges = screen.getAllByText('completed');
+        expect(completedBadges.length).toBe(2);
       });
 
       // Failed status (session-3)
-      const failedBadges = screen.getAllByText(/failed/i);
-      expect(failedBadges.length).toBeGreaterThan(0);
+      const failedBadges = screen.getAllByText('failed');
+      expect(failedBadges.length).toBe(1);
     });
 
     it('should display developer usernames', async () => {
@@ -414,11 +421,14 @@ describe('ProjectDetail', () => {
 
       await user.click(screen.getByText('Sessions'));
 
+      // Wait for developer names to render (kulesh appears twice)
       await waitFor(() => {
-        expect(screen.getByText('kulesh')).toBeInTheDocument();
+        const kuleshElements = screen.getAllByText('kulesh');
+        expect(kuleshElements.length).toBe(2); // session-1 and session-3
       });
 
-      expect(screen.getByText('sarah')).toBeInTheDocument();
+      const sarahElements = screen.getAllByText('sarah');
+      expect(sarahElements.length).toBe(1); // session-2
     });
 
     it('should display message counts', async () => {
