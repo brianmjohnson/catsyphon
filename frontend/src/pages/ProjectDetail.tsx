@@ -28,9 +28,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Folder,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { SentimentTimelineChart } from '@/components/SentimentTimelineChart';
 import { ToolUsageChart } from '@/components/ToolUsageChart';
+import type { ProjectSessionFilters } from '@/lib/api';
 
 type Tab = 'stats' | 'sessions' | 'files';
 
@@ -393,18 +397,56 @@ function SessionsTab({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Filters and sorting
+  const [developer, setDeveloper] = useState<string>('');
+  const [outcome, setOutcome] = useState<'success' | 'failed' | 'partial' | ''>('');
+  const [sortBy, setSortBy] = useState<'start_time' | 'duration' | 'messages'>('start_time');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+
   const page = parseInt(searchParams.get('page') || '1');
   const pageSize = 20;
 
+  // Get stats to extract unique developers
+  const { data: stats } = useQuery({
+    queryKey: ['projects', projectId, 'stats'],
+    queryFn: () => getProjectStats(projectId),
+  });
+
+  // Build filters object
+  const filters: ProjectSessionFilters = {
+    ...(developer && { developer }),
+    ...(outcome && { outcome }),
+    sort_by: sortBy,
+    order,
+  };
+
   const { data: sessions, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
-    queryKey: ['projects', projectId, 'sessions', { page, pageSize }],
-    queryFn: () => getProjectSessions(projectId, page, pageSize),
+    queryKey: ['projects', projectId, 'sessions', { page, pageSize, filters }],
+    queryFn: () => getProjectSessions(projectId, page, pageSize, filters),
     refetchInterval: 15000, // Auto-refresh
     staleTime: 0,
   });
 
   const handlePageChange = (newPage: number) => {
     setSearchParams({ page: String(newPage) });
+  };
+
+  const handleSort = (column: 'start_time' | 'duration' | 'messages') => {
+    if (sortBy === column) {
+      // Toggle order if clicking same column
+      setOrder(order === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new column and default to desc
+      setSortBy(column);
+      setOrder('desc');
+    }
+  };
+
+  const clearFilters = () => {
+    setDeveloper('');
+    setOutcome('');
+    setSortBy('start_time');
+    setOrder('desc');
   };
 
   if (error) {
@@ -415,19 +457,77 @@ function SessionsTab({ projectId }: { projectId: string }) {
     );
   }
 
+  const hasActiveFilters = developer || outcome || sortBy !== 'start_time' || order !== 'desc';
+
   return (
     <div className="space-y-6">
-      {/* Auto-refresh indicator */}
-      <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground">
-        {isFetching && (
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span>Refreshing...</span>
+      {/* Filters and Sorting */}
+      <div className="bg-card border border-border rounded-lg p-6">
+        <div className="flex items-start justify-between gap-6">
+          {/* Filter Controls */}
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Developer Filter */}
+            <div>
+              <label htmlFor="developer-filter" className="block text-sm font-medium text-muted-foreground mb-2">
+                Developer
+              </label>
+              <select
+                id="developer-filter"
+                value={developer}
+                onChange={(e) => setDeveloper(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">All Developers</option>
+                {stats?.developers.map((dev) => (
+                  <option key={dev} value={dev}>
+                    {dev}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Outcome Filter */}
+            <div>
+              <label htmlFor="outcome-filter" className="block text-sm font-medium text-muted-foreground mb-2">
+                Outcome
+              </label>
+              <select
+                id="outcome-filter"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value as typeof outcome)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">All Outcomes</option>
+                <option value="success">Success</option>
+                <option value="partial">Partial</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
           </div>
-        )}
-        {dataUpdatedAt && !isFetching && (
-          <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
-        )}
+
+          {/* Clear Filters Button */}
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="px-4 py-2 text-sm bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+            >
+              Clear Filters
+            </button>
+          )}
+        </div>
+
+        {/* Auto-refresh indicator */}
+        <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground mt-4">
+          {isFetching && (
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span>Refreshing...</span>
+            </div>
+          )}
+          {dataUpdatedAt && !isFetching && (
+            <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
+          )}
+        </div>
       </div>
 
       {/* Sessions Table */}
@@ -445,21 +545,57 @@ function SessionsTab({ projectId }: { projectId: string }) {
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Start Time
+                  {/* Sortable: Start Time */}
+                  <th
+                    onClick={() => handleSort('start_time')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Start Time
+                      {sortBy === 'start_time' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Duration
+                  {/* Sortable: Duration */}
+                  <th
+                    onClick={() => handleSort('duration')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Duration
+                      {sortBy === 'duration' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
+                  {/* Non-sortable: Status */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Status
                   </th>
+                  {/* Non-sortable: Developer */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Developer
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Messages
+                  {/* Sortable: Messages */}
+                  <th
+                    onClick={() => handleSort('messages')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Messages
+                      {sortBy === 'messages' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
+                  {/* Non-sortable: Files */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Files
                   </th>

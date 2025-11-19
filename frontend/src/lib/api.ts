@@ -359,13 +359,36 @@ export async function getProjectStats(
   return apiFetch<ProjectStats>(`/projects/${projectId}/stats${params}`);
 }
 
+export interface ProjectSessionFilters {
+  developer?: string;
+  outcome?: 'success' | 'failed' | 'partial';
+  date_from?: string;
+  date_to?: string;
+  sort_by?: 'start_time' | 'duration' | 'messages';
+  order?: 'asc' | 'desc';
+}
+
 export async function getProjectSessions(
   projectId: string,
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  filters?: ProjectSessionFilters
 ): Promise<ProjectSession[]> {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+
+  if (filters) {
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        params.append(key, String(value));
+      }
+    });
+  }
+
   return apiFetch<ProjectSession[]>(
-    `/projects/${projectId}/sessions?page=${page}&page_size=${pageSize}`
+    `/projects/${projectId}/sessions?${params.toString()}`
   );
 }
 
