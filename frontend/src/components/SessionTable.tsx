@@ -254,7 +254,10 @@ export const renderHelpers = {
 
   /** Format message count */
   messageCount: (session: Session, variant: 'observatory' | 'default' = 'default') => (
-    <span className={`font-mono text-${variant === 'observatory' ? 'xs' : 'sm'} ${variant === 'observatory' ? 'text-foreground/90' : ''}`}>
+    <span
+      className={`font-mono text-${variant === 'observatory' ? 'xs' : 'sm'} ${variant === 'observatory' ? 'text-foreground/90' : ''}`}
+      title="Total number of messages in this conversation"
+    >
       {session.message_count.toLocaleString()}
     </span>
   ),
@@ -268,17 +271,30 @@ export const renderHelpers = {
   /** Format success indicator (checkmark/X) */
   successIndicator: (session: Session) => {
     if (session.success === null) {
-      return <span className="font-mono text-xs text-muted-foreground">---</span>;
+      return (
+        <span
+          className="font-mono text-xs text-muted-foreground"
+          title="Success status unknown or not yet determined"
+        >
+          ---
+        </span>
+      );
     }
     if (session.success) {
       return (
-        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-400/20 text-emerald-400 text-sm">
+        <span
+          className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-400/20 text-emerald-400 text-sm cursor-help"
+          title="Session achieved its goal"
+        >
           ✓
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-400/20 text-rose-400 text-sm">
+      <span
+        className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-400/20 text-rose-400 text-sm cursor-help"
+        title="Session failed to achieve its goal"
+      >
         ✗
       </span>
     );

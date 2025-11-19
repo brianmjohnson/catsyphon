@@ -9,6 +9,22 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, success, variant = 'default' }: StatusBadgeProps) {
+  // Status tooltip descriptions
+  const getStatusTooltip = (status: string): string => {
+    switch (status) {
+      case 'open':
+        return 'Session is currently active';
+      case 'in_progress':
+        return 'Session is being processed';
+      case 'completed':
+        return 'Session finished successfully';
+      case 'failed':
+        return 'Session encountered errors';
+      default:
+        return status;
+    }
+  };
+
   if (variant === 'observatory') {
     // Observatory theme: cyan/emerald/rose colors with neon aesthetic
     const colorClass =
@@ -19,7 +35,10 @@ export function StatusBadge({ status, success, variant = 'default' }: StatusBadg
           : 'bg-cyan-400/10 border border-cyan-400/30 text-cyan-400';
 
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded font-mono text-[10px] uppercase tracking-wide ${colorClass}`}>
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded font-mono text-[10px] uppercase tracking-wide ${colorClass}`}
+        title={getStatusTooltip(status)}
+      >
         {status.replace('_', ' ')}
       </span>
     );
@@ -35,7 +54,10 @@ export function StatusBadge({ status, success, variant = 'default' }: StatusBadg
   }
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}>
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${colorClass}`}
+      title={getStatusTooltip(status)}
+    >
       {status}
     </span>
   );
