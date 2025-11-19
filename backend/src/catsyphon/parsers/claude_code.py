@@ -67,6 +67,22 @@ class ClaudeCodeParser:
     - Each line must be valid JSON
     - Objects must contain 'sessionId' and 'version' fields
     - Version must be compatible with Claude Code format
+
+    Supported formats:
+    - Modern format (v2.0+): Separate files for agents with 'agentId' field
+      * Main conversations: {session_id}.jsonl
+      * Agent conversations: agent-{agent_id}.jsonl
+      * Messages contain 'agentId' field to identify agent conversations
+      * Parent linking supported via agentId as unique session identifier
+
+    Known limitations:
+    - Legacy format (pre-v2.0): Single file with mixed agent/main messages
+      * Files named: {session_id}.jsonl (no separate agent files)
+      * No 'agentId' field in messages
+      * Uses 'isSidechain' flag per-message instead of per-file
+      * Agent conversations cannot be separated from main thread
+      * Parent-child relationships not supported for these files
+      * These files are parsed as main conversations with agent messages mixed in
     """
 
     def __init__(self) -> None:
@@ -103,13 +119,13 @@ class ClaudeCodeParser:
         if not file_path.exists() or not file_path.is_file():
             return False
 
-        # Read first several lines to detect format
+        # Scan entire file to detect format
+        # Each JSONL message is independent - sessionId could appear anywhere
         try:
             with file_path.open("r", encoding="utf-8") as f:
-                for _ in range(10):  # Check first 10 lines (summary may be first)
-                    line = f.readline()
-                    if not line:
-                        break
+                for line in f:
+                    if not line.strip():
+                        continue
 
                     try:
                         data = json.loads(line)
@@ -155,6 +171,8 @@ class ClaudeCodeParser:
         agent_version = None
         git_branch = None
         cwd = None
+        is_sidechain = False
+        agent_id = None
 
         for msg in raw_messages[:10]:  # Check first 10 messages
             if "sessionId" in msg:
@@ -162,6 +180,8 @@ class ClaudeCodeParser:
                 agent_version = msg.get("version")
                 git_branch = msg.get("gitBranch")
                 cwd = msg.get("cwd")
+                is_sidechain = msg.get("isSidechain", False)
+                agent_id = msg.get("agentId")
                 break
 
         if not session_id:
@@ -182,11 +202,45 @@ class ClaudeCodeParser:
 
         code_changes = self._detect_code_changes(all_tool_calls)
 
+        # Determine conversation type and hierarchy (Phase 2: Epic 7u2)
+        conversation_type = "agent" if is_sidechain else "main"
+
+        # For agent conversations, generate unique session_id and extract parent's session_id
+        # Agent log files store the PARENT's session ID in the sessionId field,
+        # so we need to generate a unique identifier for the agent itself
+        if is_sidechain and agent_id:
+            # Use agentId as the unique session identifier for this agent conversation
+            agent_session_id = agent_id
+            parent_session_id = session_id  # Parent's session ID from file
+            session_id_to_use = agent_session_id
+        else:
+            # Main conversations use sessionId directly
+            session_id_to_use = session_id
+            parent_session_id = None
+
+        # Context semantics for Claude Code agents (isolated context, can use tools)
+        context_semantics = {}
+        agent_metadata = {}
+
+        if is_sidechain:
+            context_semantics = {
+                "shares_parent_context": False,  # Agents have isolated context
+                "can_use_parent_tools": True,  # Can use tools like parent
+                "isolated_context": True,  # Explicitly isolated
+                "max_context_window": None,  # Unknown for Claude Code agents
+            }
+
+            agent_metadata = {
+                "agent_id": agent_id,
+                "agent_type": "subagent",  # Could be Explore, Plan, etc.
+                "parent_session_id": parent_session_id,  # Parent's actual session ID
+            }
+
         # Build ParsedConversation
         return ParsedConversation(
             agent_type="claude-code",
             agent_version=agent_version,
-            session_id=session_id,
+            session_id=session_id_to_use,  # Unique ID (agentId for agents, sessionId for main)
             git_branch=git_branch,
             working_directory=cwd,
             start_time=start_time,
@@ -194,6 +248,10 @@ class ClaudeCodeParser:
             messages=parsed_messages,
             files_touched=[change.file_path for change in code_changes],
             code_changes=code_changes,
+            conversation_type=conversation_type,
+            parent_session_id=parent_session_id,
+            context_semantics=context_semantics,
+            agent_metadata=agent_metadata,
         )
 
     def supports_incremental(self, file_path: Path) -> bool:

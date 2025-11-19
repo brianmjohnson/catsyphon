@@ -15,7 +15,11 @@ import type {
   IngestionStatsResponse,
   MessageResponse,
   OverviewStats,
+  ProjectFileAggregation,
+  ProjectListItem,
   ProjectResponse,
+  ProjectSession,
+  ProjectStats,
   UploadResponse,
   WatchConfigurationCreate,
   WatchConfigurationResponse,
@@ -122,8 +126,8 @@ export async function tagConversation(
 
 // ===== Metadata Endpoints =====
 
-export async function getProjects(): Promise<ProjectResponse[]> {
-  return apiFetch<ProjectResponse[]>('/projects');
+export async function getProjects(): Promise<ProjectListItem[]> {
+  return apiFetch<ProjectListItem[]>('/projects');
 }
 
 export async function getDevelopers(): Promise<DeveloperResponse[]> {
@@ -343,4 +347,26 @@ export async function getWatchConfigIngestionJobs(
   return apiFetch<IngestionJobResponse[]>(
     `/ingestion/jobs/watch-config/${configId}?page=${page}&page_size=${pageSize}`
   );
+}
+
+// ===== Project Analytics Endpoints =====
+
+export async function getProjectStats(projectId: string): Promise<ProjectStats> {
+  return apiFetch<ProjectStats>(`/projects/${projectId}/stats`);
+}
+
+export async function getProjectSessions(
+  projectId: string,
+  page = 1,
+  pageSize = 20
+): Promise<ProjectSession[]> {
+  return apiFetch<ProjectSession[]>(
+    `/projects/${projectId}/sessions?page=${page}&page_size=${pageSize}`
+  );
+}
+
+export async function getProjectFiles(
+  projectId: string
+): Promise<ProjectFileAggregation[]> {
+  return apiFetch<ProjectFileAggregation[]>(`/projects/${projectId}/files`);
 }

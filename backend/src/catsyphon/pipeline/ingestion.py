@@ -215,13 +215,40 @@ def ingest_conversation(
     is_update = False
     conversation = None
 
-    # Check for existing conversation by session_id (if provided)
+    # Check for existing conversation by session_id AND conversation_type (if provided)
+    # CRITICAL: Agent conversations share the parent's session_id, so we need to check
+    # BOTH session_id and conversation_type to avoid false duplicates
     if parsed.session_id:
         existing_conversation = conversation_repo.get_by_session_id(
             parsed.session_id, workspace_id
         )
 
+        # Filter to only matching conversation_type (allow main and agent to coexist)
+        # NOTE: Normalize to uppercase for comparison (db has uppercase, parser has lowercase)
+        if (
+            existing_conversation
+            and existing_conversation.conversation_type.upper()
+            != parsed.conversation_type.upper()
+        ):
+            logger.info(
+                f"Found conversation with same session_id but different type: "
+                f"existing={existing_conversation.conversation_type}, new={parsed.conversation_type}. "
+                f"Treating as separate conversations."
+            )
+            existing_conversation = None  # Treat as new conversation
+
         if existing_conversation:
+            # Check if this is the SAME file being re-processed
+            if file_path and existing_conversation.raw_logs:
+                existing_file_paths = {
+                    Path(rl.file_path)
+                    for rl in existing_conversation.raw_logs
+                    if rl.file_path is not None
+                }
+                is_same_file = file_path in existing_file_paths
+            else:
+                is_same_file = False
+
             if update_mode == "skip":
                 logger.info(
                     f"Skipping existing conversation: session_id={parsed.session_id}, "
@@ -352,11 +379,35 @@ def ingest_conversation(
     raw_log_repo = RawLogRepository(session)
 
     # Step 1: Get or create Project
+    # Auto-detect from working_directory or use manual project_name
     project_id = None
     if project_name:
-        project = project_repo.get_or_create_by_name(project_name, workspace_id)
+        # Manual override: use project_name as display name
+        # If working_directory is available, use it as directory_path
+        if parsed.working_directory:
+            project = project_repo.get_or_create_by_directory(
+                directory_path=parsed.working_directory,
+                workspace_id=workspace_id,
+                name=project_name,  # Override auto-generated name
+            )
+        else:
+            # Fallback to old behavior if no working_directory
+            project = project_repo.get_or_create_by_name(project_name, workspace_id)
         project_id = project.id
         logger.debug(f"Project: {project.name} ({project.id})")
+    elif parsed.working_directory:
+        # Auto-detect project from working_directory
+        project = project_repo.get_or_create_by_directory(
+            directory_path=parsed.working_directory, workspace_id=workspace_id
+        )
+        project_id = project.id
+        logger.debug(
+            f"Auto-detected project: {project.name} from {parsed.working_directory}"
+        )
+    else:
+        logger.warning(
+            "No project association: working_directory not found and --project not provided"
+        )
 
     # Step 2: Get or create Developer
     developer_id = None
@@ -367,13 +418,39 @@ def ingest_conversation(
         developer_id = developer.id
         logger.debug(f"Developer: {developer.username} ({developer.id})")
 
-    # Step 3: Create or Update Conversation
+    # Step 3: Hierarchical conversation linking (Phase 2: Epic 7u2)
+    # If this is an agent/subagent conversation, find the parent conversation
+    parent_conversation_id = None
+    # NOTE: Parser returns lowercase "agent" but database stores uppercase "AGENT"
+    # (due to migration using enum key names instead of values)
+    if parsed.conversation_type.lower() == "agent" and parsed.parent_session_id:
+        # Look up parent - it should be the MAIN conversation with this session_id
+        parent_conversation = conversation_repo.get_by_session_id(
+            parsed.parent_session_id, workspace_id
+        )
+        # Only link if we found a MAIN conversation (avoid self-reference with agents)
+        # Database has uppercase values, so compare with uppercase
+        if parent_conversation and parent_conversation.conversation_type.upper() == "MAIN":
+            parent_conversation_id = parent_conversation.id
+            logger.info(
+                f"Linking agent conversation (session_id={parsed.session_id}) "
+                f"to parent (session_id={parsed.parent_session_id}, id={parent_conversation_id})"
+            )
+        else:
+            logger.warning(
+                f"Parent MAIN conversation not found for agent (parent_session_id={parsed.parent_session_id}). "
+                f"Agent conversation will be created without parent link."
+            )
+
+    # Step 4: Create or Update Conversation
     if not is_update:
         # Create new conversation
         conversation = conversation_repo.create(
             workspace_id=workspace_id,
             project_id=project_id,
             developer_id=developer_id,
+            parent_conversation_id=parent_conversation_id,
+            conversation_type=parsed.conversation_type,
             agent_type=parsed.agent_type,
             agent_version=parsed.agent_version,
             start_time=parsed.start_time,
@@ -381,6 +458,8 @@ def ingest_conversation(
             status="completed" if parsed.end_time else "open",
             iteration_count=1,  # TODO: Detect iterations from parsed data
             tags=tags or {},
+            context_semantics=parsed.context_semantics,
+            agent_metadata=parsed.agent_metadata,
             extra_data={
                 "session_id": parsed.session_id,
                 "git_branch": parsed.git_branch,
@@ -390,10 +469,14 @@ def ingest_conversation(
         )
         logger.info(f"Created conversation: {conversation.id}")
     else:
-        # Update existing conversation with project/developer associations
+        # Update existing conversation with project/developer/hierarchy associations
         assert conversation is not None, "conversation must be set in replace mode"
         conversation.project_id = project_id
         conversation.developer_id = developer_id
+        conversation.parent_conversation_id = parent_conversation_id
+        conversation.conversation_type = parsed.conversation_type
+        conversation.context_semantics = parsed.context_semantics
+        conversation.agent_metadata = parsed.agent_metadata
         logger.info(f"Updated conversation associations: {conversation.id}")
 
     # Step 4: Create Epoch (one epoch per conversation for now)
@@ -1011,3 +1094,94 @@ def ingest_messages_incremental(
     )
 
     return conversation
+
+
+def link_orphaned_agents(session: Session, workspace_id: UUID) -> int:
+    """
+    Link orphaned agent conversations to their parent conversations.
+
+    This function is called after batch ingestion to handle cases where agents
+    were ingested before their parent conversations. It finds all agent
+    conversations without parent links and attempts to link them using the
+    parent_session_id from agent_metadata.
+
+    Args:
+        session: Database session
+        workspace_id: Workspace UUID to scope the linking
+
+    Returns:
+        Number of agents successfully linked
+
+    Note:
+        This is necessary because ingestion order is not guaranteed - agents
+        may be processed before their parent main conversations exist in the
+        database. By running this after all files are ingested, we can link
+        agents that couldn't be linked during initial ingestion.
+    """
+    logger.info(f"Starting post-ingestion agent linking for workspace {workspace_id}")
+
+    conversation_repo = ConversationRepository(session)
+
+    # Find all orphaned agent conversations in this workspace
+    orphaned_agents = (
+        session.query(Conversation)
+        .filter(
+            Conversation.workspace_id == workspace_id,
+            Conversation.conversation_type == "agent",
+            Conversation.parent_conversation_id.is_(None),
+        )
+        .all()
+    )
+
+    if not orphaned_agents:
+        logger.info("No orphaned agents found")
+        return 0
+
+    logger.info(f"Found {len(orphaned_agents)} orphaned agent conversations to link")
+
+    linked_count = 0
+
+    for agent in orphaned_agents:
+        # Get parent_session_id from agent_metadata
+        parent_session_id = agent.agent_metadata.get("parent_session_id")
+
+        if not parent_session_id:
+            logger.warning(
+                f"Agent conversation {agent.id} has no parent_session_id in agent_metadata"
+            )
+            continue
+
+        # Look up parent conversation by session_id
+        parent_conversation = conversation_repo.get_by_session_id(
+            parent_session_id, workspace_id
+        )
+
+        if not parent_conversation:
+            logger.warning(
+                f"Parent MAIN conversation not found for agent {agent.id} "
+                f"(parent_session_id={parent_session_id})"
+            )
+            continue
+
+        # Verify parent is a MAIN conversation (avoid linking agents to other agents)
+        if parent_conversation.conversation_type.upper() != "MAIN":
+            logger.warning(
+                f"Parent conversation {parent_conversation.id} is not MAIN type "
+                f"(type={parent_conversation.conversation_type}), skipping agent {agent.id}"
+            )
+            continue
+
+        # Link agent to parent
+        agent.parent_conversation_id = parent_conversation.id
+        linked_count += 1
+
+        logger.info(
+            f"Linked agent conversation {agent.id} (session_id={agent.extra_data.get('session_id')}) "
+            f"to parent {parent_conversation.id} (session_id={parent_session_id})"
+        )
+
+    session.flush()
+
+    logger.info(f"Post-ingestion linking complete: linked {linked_count}/{len(orphaned_agents)} agents")
+
+    return linked_count
