@@ -225,14 +225,30 @@ async def list_project_sessions(
     project_id: UUID,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    developer: Optional[str] = Query(None, description="Filter by developer username"),
+    outcome: Optional[str] = Query(None, description="Filter by outcome: success, failed, all (default: all)"),
+    date_from: Optional[str] = Query(None, description="Filter sessions from this date (ISO format: YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter sessions to this date (ISO format: YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query("start_time", description="Sort by: start_time, duration, status, developer"),
+    order: str = Query("desc", description="Sort order: asc or desc"),
     session: Session = Depends(get_db),
 ) -> list[ProjectSession]:
     """
-    List all sessions (conversations) for a project.
+    List all sessions (conversations) for a project with filtering and sorting.
 
-    Returns paginated list of conversations with lightweight metadata,
-    sorted by start_time descending (newest first).
+    Returns paginated list of conversations with lightweight metadata.
+
+    Filters:
+    - developer: Filter by developer username
+    - outcome: Filter by success/failed status
+    - date_from/date_to: Filter by date range
+
+    Sorting:
+    - sort_by: Column to sort by (start_time, duration, status, developer)
+    - order: asc or desc
     """
+    from datetime import datetime
+
     project_repo = ProjectRepository(session)
 
     # Verify project exists
@@ -240,13 +256,49 @@ async def list_project_sessions(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Query conversations with pagination
+    # Build base query
     query = (
         session.query(Conversation, Developer.username)
         .outerjoin(Developer, Conversation.developer_id == Developer.id)
         .filter(Conversation.project_id == project_id)
-        .order_by(Conversation.start_time.desc())
     )
+
+    # Apply filters
+    if developer:
+        query = query.filter(Developer.username == developer)
+
+    if outcome:
+        if outcome == "success":
+            query = query.filter(Conversation.success == True)
+        elif outcome == "failed":
+            query = query.filter(Conversation.success == False)
+        # "all" or invalid values: no filter
+
+    if date_from:
+        try:
+            from_date = datetime.fromisoformat(date_from)
+            query = query.filter(Conversation.start_time >= from_date)
+        except ValueError:
+            pass  # Invalid date format, skip filter
+
+    if date_to:
+        try:
+            to_date = datetime.fromisoformat(date_to)
+            query = query.filter(Conversation.start_time <= to_date)
+        except ValueError:
+            pass  # Invalid date format, skip filter
+
+    # Apply sorting
+    if sort_by == "duration":
+        # Sort by calculated duration (end_time - start_time)
+        duration_expr = Conversation.end_time - Conversation.start_time
+        query = query.order_by(duration_expr.desc() if order == "desc" else duration_expr.asc())
+    elif sort_by == "status":
+        query = query.order_by(Conversation.status.desc() if order == "desc" else Conversation.status.asc())
+    elif sort_by == "developer":
+        query = query.order_by(Developer.username.desc() if order == "desc" else Developer.username.asc())
+    else:  # default: start_time
+        query = query.order_by(Conversation.start_time.desc() if order == "desc" else Conversation.start_time.asc())
 
     # Apply pagination
     offset = (page - 1) * page_size
