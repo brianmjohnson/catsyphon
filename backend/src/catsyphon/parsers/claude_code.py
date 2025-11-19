@@ -188,7 +188,19 @@ class ClaudeCodeParser:
 
         # Determine conversation type and hierarchy (Phase 2: Epic 7u2)
         conversation_type = "agent" if is_sidechain else "main"
-        parent_session_id = session_id if is_sidechain else None
+
+        # For agent conversations, generate unique session_id and extract parent's session_id
+        # Agent log files store the PARENT's session ID in the sessionId field,
+        # so we need to generate a unique identifier for the agent itself
+        if is_sidechain and agent_id:
+            # Use agentId as the unique session identifier for this agent conversation
+            agent_session_id = agent_id
+            parent_session_id = session_id  # Parent's session ID from file
+            session_id_to_use = agent_session_id
+        else:
+            # Main conversations use sessionId directly
+            session_id_to_use = session_id
+            parent_session_id = None
 
         # Context semantics for Claude Code agents (isolated context, can use tools)
         context_semantics = {}
@@ -205,14 +217,14 @@ class ClaudeCodeParser:
             agent_metadata = {
                 "agent_id": agent_id,
                 "agent_type": "subagent",  # Could be Explore, Plan, etc.
-                "parent_session_id": session_id,  # For easy reference
+                "parent_session_id": parent_session_id,  # Parent's actual session ID
             }
 
         # Build ParsedConversation
         return ParsedConversation(
             agent_type="claude-code",
             agent_version=agent_version,
-            session_id=session_id,
+            session_id=session_id_to_use,  # Unique ID (agentId for agents, sessionId for main)
             git_branch=git_branch,
             working_directory=cwd,
             start_time=start_time,

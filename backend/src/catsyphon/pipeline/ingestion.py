@@ -1094,3 +1094,94 @@ def ingest_messages_incremental(
     )
 
     return conversation
+
+
+def link_orphaned_agents(session: Session, workspace_id: UUID) -> int:
+    """
+    Link orphaned agent conversations to their parent conversations.
+
+    This function is called after batch ingestion to handle cases where agents
+    were ingested before their parent conversations. It finds all agent
+    conversations without parent links and attempts to link them using the
+    parent_session_id from agent_metadata.
+
+    Args:
+        session: Database session
+        workspace_id: Workspace UUID to scope the linking
+
+    Returns:
+        Number of agents successfully linked
+
+    Note:
+        This is necessary because ingestion order is not guaranteed - agents
+        may be processed before their parent main conversations exist in the
+        database. By running this after all files are ingested, we can link
+        agents that couldn't be linked during initial ingestion.
+    """
+    logger.info(f"Starting post-ingestion agent linking for workspace {workspace_id}")
+
+    conversation_repo = ConversationRepository(session)
+
+    # Find all orphaned agent conversations in this workspace
+    orphaned_agents = (
+        session.query(Conversation)
+        .filter(
+            Conversation.workspace_id == workspace_id,
+            Conversation.conversation_type == "agent",
+            Conversation.parent_conversation_id.is_(None),
+        )
+        .all()
+    )
+
+    if not orphaned_agents:
+        logger.info("No orphaned agents found")
+        return 0
+
+    logger.info(f"Found {len(orphaned_agents)} orphaned agent conversations to link")
+
+    linked_count = 0
+
+    for agent in orphaned_agents:
+        # Get parent_session_id from agent_metadata
+        parent_session_id = agent.agent_metadata.get("parent_session_id")
+
+        if not parent_session_id:
+            logger.warning(
+                f"Agent conversation {agent.id} has no parent_session_id in agent_metadata"
+            )
+            continue
+
+        # Look up parent conversation by session_id
+        parent_conversation = conversation_repo.get_by_session_id(
+            parent_session_id, workspace_id
+        )
+
+        if not parent_conversation:
+            logger.warning(
+                f"Parent MAIN conversation not found for agent {agent.id} "
+                f"(parent_session_id={parent_session_id})"
+            )
+            continue
+
+        # Verify parent is a MAIN conversation (avoid linking agents to other agents)
+        if parent_conversation.conversation_type.upper() != "MAIN":
+            logger.warning(
+                f"Parent conversation {parent_conversation.id} is not MAIN type "
+                f"(type={parent_conversation.conversation_type}), skipping agent {agent.id}"
+            )
+            continue
+
+        # Link agent to parent
+        agent.parent_conversation_id = parent_conversation.id
+        linked_count += 1
+
+        logger.info(
+            f"Linked agent conversation {agent.id} (session_id={agent.extra_data.get('session_id')}) "
+            f"to parent {parent_conversation.id} (session_id={parent_session_id})"
+        )
+
+    session.flush()
+
+    logger.info(f"Post-ingestion linking complete: linked {linked_count}/{len(orphaned_agents)} agents")
+
+    return linked_count
