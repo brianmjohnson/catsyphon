@@ -313,6 +313,12 @@ export interface GroupedFile {
 
 // ===== Project Analytics Types =====
 
+export interface SentimentTimelinePoint {
+  date: string; // ISO date string (YYYY-MM-DD)
+  avg_sentiment: number; // Average sentiment score (-1.0 to 1.0)
+  session_count: number; // Number of sessions on this date
+}
+
 export interface ProjectStats {
   project_id: string;
   session_count: number;
@@ -327,6 +333,7 @@ export interface ProjectStats {
   tool_usage: Record<string, number>;
   developer_count: number;
   developers: string[];
+  sentiment_timeline: SentimentTimelinePoint[];
 }
 
 export interface ProjectSession {

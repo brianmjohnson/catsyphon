@@ -29,6 +29,8 @@ import {
   ChevronRight,
   Folder,
 } from 'lucide-react';
+import { SentimentTimelineChart } from '@/components/SentimentTimelineChart';
+import { ToolUsageChart } from '@/components/ToolUsageChart';
 
 type Tab = 'stats' | 'sessions' | 'files';
 
@@ -300,6 +302,11 @@ function StatsTab({ projectId }: { projectId: string }) {
         </div>
       </div>
 
+      {/* Sentiment Timeline */}
+      {stats.sentiment_timeline && stats.sentiment_timeline.length > 0 && (
+        <SentimentTimelineChart data={stats.sentiment_timeline} />
+      )}
+
       {/* Insights Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Top Features */}
@@ -341,25 +348,7 @@ function StatsTab({ projectId }: { projectId: string }) {
 
       {/* Tool Usage */}
       {Object.keys(stats.tool_usage).length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Tool Usage</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {Object.entries(stats.tool_usage)
-              .sort(([, a], [, b]) => b - a)
-              .slice(0, 8)
-              .map(([tool, count]) => (
-                <div
-                  key={tool}
-                  className="flex flex-col items-center justify-center p-4 bg-muted rounded-lg"
-                >
-                  <p className="text-2xl font-bold font-mono">{count}</p>
-                  <p className="text-xs text-muted-foreground text-center mt-1">
-                    {tool}
-                  </p>
-                </div>
-              ))}
-          </div>
-        </div>
+        <ToolUsageChart toolUsage={stats.tool_usage} />
       )}
     </div>
   );
