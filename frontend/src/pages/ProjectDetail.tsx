@@ -69,28 +69,36 @@ export default function ProjectDetail() {
 
   return (
     <div className="container mx-auto px-6 py-8">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-3">
-          <Folder className="w-8 h-8 text-primary" />
-          <h1 className="text-4xl font-bold">{project?.name || 'Loading...'}</h1>
+      {/* Observatory Header */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center glow-amber">
+              <Folder className="w-6 h-6 text-slate-950" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-display tracking-wide text-foreground">
+                {project?.name?.toUpperCase() || 'LOADING...'}
+              </h1>
+              {project?.description && (
+                <p className="text-sm font-mono text-muted-foreground mt-1">
+                  {project.description}
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/projects')}
+            className="px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-cyan-400 border border-border/50 rounded-md hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
+          >
+            ← Projects
+          </button>
         </div>
-        {project?.description && (
-          <p className="text-muted-foreground text-lg mb-2">
-            {project.description}
-          </p>
-        )}
-        <button
-          onClick={() => navigate('/projects')}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          ← Back to Projects
-        </button>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-border mb-8">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+      {/* Observatory Tab Navigation */}
+      <div className="mb-8">
+        <nav className="flex gap-2 bg-slate-900/30 p-1 rounded-lg border border-border/50" aria-label="Tabs">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -100,27 +108,17 @@ export default function ProjectDetail() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm
+                  flex-1 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-md font-mono text-xs font-semibold uppercase tracking-wider
                   transition-all duration-200
                   ${
                     isActive
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                      ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
                   }
                 `}
                 aria-current={isActive ? 'page' : undefined}
               >
-                <Icon
-                  className={`
-                    -ml-0.5 mr-2 h-5 w-5 transition-colors
-                    ${
-                      isActive
-                        ? 'text-primary'
-                        : 'text-muted-foreground group-hover:text-foreground'
-                    }
-                  `}
-                  aria-hidden="true"
-                />
+                <Icon className="h-4 w-4" aria-hidden="true" />
                 {tab.label}
               </button>
             );
@@ -192,149 +190,155 @@ function StatsTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-8">
-      {/* Date Range Selector & Auto-refresh indicator */}
+      {/* Observatory Time Range Control */}
       <div className="flex items-center justify-between gap-4">
         {/* Date Range Buttons */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground mr-2">Time Range:</span>
-          {(['7d', '30d', '90d', 'all'] as const).map((range) => (
-            <button
-              key={range}
-              onClick={() => setDateRange(range)}
-              className={`
-                px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200
-                ${
-                  dateRange === range
-                    ? 'bg-primary text-primary-foreground shadow-md'
-                    : 'bg-card border border-border hover:bg-accent hover:border-accent-foreground/20'
-                }
-              `}
-            >
-              {dateRangeLabels[range]}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <Clock className="w-4 h-4 text-cyan-400" />
+          <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Time Range:</span>
+          <div className="flex gap-2">
+            {(['7d', '30d', '90d', 'all'] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => setDateRange(range)}
+                className={`
+                  px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider rounded-md transition-all duration-200
+                  ${
+                    dateRange === range
+                      ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+                      : 'border border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/30 hover:border-border'
+                  }
+                `}
+              >
+                {dateRangeLabels[range]}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Auto-refresh indicator */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {isFetching && (
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span>Refreshing...</span>
+        <div className="flex items-center gap-2">
+          {isFetching ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-cyan-400/10 border border-cyan-400/30">
+              <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full pulse-dot" />
+              <span className="text-xs font-mono text-cyan-400">SYNCING</span>
             </div>
-          )}
-          {dataUpdatedAt && !isFetching && (
-            <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
-          )}
+          ) : dataUpdatedAt ? (
+            <span className="text-xs font-mono text-muted-foreground">
+              SYNC {formatDistanceToNow(dataUpdatedAt, { addSuffix: true }).toUpperCase()}
+            </span>
+          ) : null}
         </div>
       </div>
 
-      {/* Metrics Grid */}
+      {/* Observatory Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Total Sessions */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Sessions
-            </p>
-            <Activity className="w-5 h-5 text-muted-foreground" />
+        <div className="observatory-card p-6 group hover:border-cyan-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
+              Sessions
+            </span>
+            <Activity className="w-5 h-5 text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-cyan-400 glow-cyan mb-3">
             {stats.session_count.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {stats.developer_count} developer{stats.developer_count !== 1 ? 's' : ''}
+          <p className="text-xs font-mono text-muted-foreground">
+            <span className="text-foreground/80">{stats.developer_count}</span> developer{stats.developer_count !== 1 ? 's' : ''}
           </p>
         </div>
 
         {/* Total Messages */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Messages
-            </p>
-            <MessageSquare className="w-5 h-5 text-muted-foreground" />
+        <div className="observatory-card p-6 group hover:border-emerald-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
+              Messages
+            </span>
+            <MessageSquare className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-emerald-400 glow-emerald mb-3">
             {stats.total_messages.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {stats.session_count > 0
-              ? `${Math.round(stats.total_messages / stats.session_count)} avg per session`
-              : 'N/A'}
+          <p className="text-xs font-mono text-muted-foreground">
+            avg{' '}
+            <span className="text-foreground/80">
+              {stats.session_count > 0
+                ? Math.round(stats.total_messages / stats.session_count).toLocaleString()
+                : 'N/A'}
+            </span>
+            {' '}per session
           </p>
         </div>
 
         {/* Files Changed */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-amber-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Files Changed
-            </p>
-            <FileText className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <FileText className="w-5 h-5 text-amber-400/60 group-hover:text-amber-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-amber-400 glow-amber mb-3">
             {stats.total_files_changed.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Across all sessions
+          <p className="text-xs font-mono text-muted-foreground">
+            across all sessions
           </p>
         </div>
 
         {/* Success Rate */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-emerald-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Success Rate
-            </p>
-            <TrendingUp className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <TrendingUp className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-emerald-400 glow-emerald mb-3">
             {stats.success_rate !== null
               ? `${Math.round(stats.success_rate * 100)}%`
               : 'N/A'}
           </p>
           {stats.success_rate !== null && (
-            <div className="mt-3">
-              <div className="w-full bg-muted rounded-full h-2">
-                <div
-                  className="bg-green-500 h-2 rounded-full transition-all"
-                  style={{ width: `${stats.success_rate * 100}%` }}
-                />
-              </div>
+            <div className="h-1.5 bg-slate-900/50 rounded-full overflow-hidden border border-border/30">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all"
+                style={{ width: `${stats.success_rate * 100}%` }}
+              />
             </div>
           )}
         </div>
 
         {/* Avg Session Duration */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-purple-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Avg Duration
-            </p>
-            <Clock className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <Clock className="w-5 h-5 text-purple-400/60 group-hover:text-purple-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-purple-400 glow-purple mb-3">
             {avgDurationMinutes !== null ? `${avgDurationMinutes}m` : 'N/A'}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Per session
+          <p className="text-xs font-mono text-muted-foreground">
+            per session
           </p>
         </div>
 
         {/* Developers */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-cyan-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Developers
-            </p>
-            <Users className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <Users className="w-5 h-5 text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
-            {stats.developer_count}
+          <p className="text-4xl font-mono font-bold text-cyan-400 glow-cyan mb-3">
+            {stats.developer_count.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Active contributors
+          <p className="text-xs font-mono text-muted-foreground">
+            active contributors
           </p>
         </div>
       </div>
