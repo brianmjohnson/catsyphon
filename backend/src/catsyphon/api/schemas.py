@@ -39,6 +39,14 @@ class ProjectListItem(ProjectResponse):
     last_session_at: Optional[datetime] = None
 
 
+class SentimentTimelinePoint(BaseModel):
+    """Single data point in sentiment timeline."""
+
+    date: str  # ISO date string (YYYY-MM-DD)
+    avg_sentiment: float  # Average sentiment score (-1.0 to 1.0)
+    session_count: int  # Number of sessions on this date
+
+
 class ProjectStats(BaseModel):
     """Statistics for a single project."""
 
@@ -59,6 +67,9 @@ class ProjectStats(BaseModel):
     # Developer participation
     developer_count: int = 0
     developers: list[str] = Field(default_factory=list)
+
+    # Sentiment timeline
+    sentiment_timeline: list[SentimentTimelinePoint] = Field(default_factory=list)
 
 
 class ProjectSession(BaseModel):

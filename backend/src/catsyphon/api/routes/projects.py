@@ -4,17 +4,23 @@ Project analytics API routes.
 Endpoints for project-level statistics, sessions, and file aggregations.
 """
 
+from collections import defaultdict
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, case
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from catsyphon.api.schemas import ProjectStats, ProjectSession, ProjectFileAggregation
+from catsyphon.api.schemas import (
+    ProjectFileAggregation,
+    ProjectSession,
+    ProjectStats,
+    SentimentTimelinePoint,
+)
 from catsyphon.db.connection import get_db
-from catsyphon.db.repositories import ProjectRepository, ConversationRepository
-from catsyphon.models.db import Conversation, Developer, FileTouched, Message
+from catsyphon.db.repositories import ProjectRepository
+from catsyphon.models.db import Conversation, Developer, Epoch, FileTouched, Message
 
 router = APIRouter()
 
@@ -23,6 +29,9 @@ router = APIRouter()
 async def get_project_stats(
     project_id: UUID,
     session: Session = Depends(get_db),
+    date_range: Optional[str] = Query(
+        None, description="Date range filter: 7d, 30d, 90d, or all (default: all)"
+    ),
 ) -> ProjectStats:
     """
     Get aggregated statistics for a project.
@@ -33,7 +42,15 @@ async def get_project_stats(
     - Top features and problems (from AI tags)
     - Tool usage distribution
     - Developer participation
+    - Sentiment timeline
+
+    Args:
+        project_id: UUID of the project
+        date_range: Optional date range filter (7d, 30d, 90d, all). Defaults to 'all'.
+                    Filters conversations by start_time >= cutoff date.
     """
+    from datetime import datetime, timedelta
+
     project_repo = ProjectRepository(session)
 
     # Verify project exists
@@ -41,10 +58,23 @@ async def get_project_stats(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get all conversations for this project
-    conversations = (
-        session.query(Conversation).filter(Conversation.project_id == project_id).all()
-    )
+    # Calculate date cutoff based on date_range
+    cutoff_date = None
+    if date_range:
+        now = datetime.now()
+        if date_range == "7d":
+            cutoff_date = now - timedelta(days=7)
+        elif date_range == "30d":
+            cutoff_date = now - timedelta(days=30)
+        elif date_range == "90d":
+            cutoff_date = now - timedelta(days=90)
+        # "all" or invalid values default to no cutoff (None)
+
+    # Get conversations for this project, optionally filtered by date
+    query = session.query(Conversation).filter(Conversation.project_id == project_id)
+    if cutoff_date:
+        query = query.filter(Conversation.start_time >= cutoff_date)
+    conversations = query.all()
 
     if not conversations:
         # Return empty stats
@@ -72,7 +102,6 @@ async def get_project_stats(
     )
 
     # Files changed aggregation (use subquery for SQLite compatibility)
-    from sqlalchemy import distinct
 
     total_files = (
         session.query(FileTouched.file_path)
@@ -88,7 +117,9 @@ async def get_project_stats(
     total_with_outcome = len(success_conversations) + len(failed_conversations)
 
     success_rate = (
-        len(success_conversations) / total_with_outcome if total_with_outcome > 0 else None
+        len(success_conversations) / total_with_outcome
+        if total_with_outcome > 0
+        else None
     )
 
     # Average duration
@@ -135,13 +166,46 @@ async def get_project_stats(
     # Developer participation
     developer_ids = {c.developer_id for c in conversations if c.developer_id}
     developers = (
-        session.query(Developer.username)
-        .filter(Developer.id.in_(developer_ids))
-        .all()
+        session.query(Developer.username).filter(Developer.id.in_(developer_ids)).all()
         if developer_ids
         else []
     )
     developer_names = [d.username for d in developers]
+
+    # Sentiment timeline (group epochs by date)
+    sentiment_timeline: list[SentimentTimelinePoint] = []
+    if conversations:
+        conversation_ids = [c.id for c in conversations]
+        epochs = (
+            session.query(Epoch)
+            .filter(Epoch.conversation_id.in_(conversation_ids))
+            .filter(Epoch.sentiment_score.isnot(None))
+            .all()
+        )
+
+        # Group by date
+        date_sentiments: dict[str, list[float]] = defaultdict(list)
+        date_conversations: dict[str, set[UUID]] = defaultdict(set)
+
+        for epoch in epochs:
+            if epoch.start_time and epoch.sentiment_score is not None:
+                date_str = epoch.start_time.date().isoformat()
+                date_sentiments[date_str].append(epoch.sentiment_score)
+                date_conversations[date_str].add(epoch.conversation_id)
+
+        # Calculate averages and create timeline points
+        for date_str in sorted(date_sentiments.keys()):
+            sentiments = date_sentiments[date_str]
+            avg_sentiment = sum(sentiments) / len(sentiments)
+            session_count_for_date = len(date_conversations[date_str])
+
+            sentiment_timeline.append(
+                SentimentTimelinePoint(
+                    date=date_str,
+                    avg_sentiment=avg_sentiment,
+                    session_count=session_count_for_date,
+                )
+            )
 
     return ProjectStats(
         project_id=project_id,
@@ -157,6 +221,7 @@ async def get_project_stats(
         tool_usage=tool_usage,
         developer_count=len(developer_ids),
         developers=developer_names,
+        sentiment_timeline=sentiment_timeline,
     )
 
 
@@ -165,14 +230,38 @@ async def list_project_sessions(
     project_id: UUID,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    developer: Optional[str] = Query(None, description="Filter by developer username"),
+    outcome: Optional[str] = Query(
+        None, description="Filter by outcome: success, failed, all (default: all)"
+    ),
+    date_from: Optional[str] = Query(
+        None, description="Filter sessions from this date (ISO format: YYYY-MM-DD)"
+    ),
+    date_to: Optional[str] = Query(
+        None, description="Filter sessions to this date (ISO format: YYYY-MM-DD)"
+    ),
+    sort_by: Optional[str] = Query(
+        "start_time", description="Sort by: start_time, duration, status, developer"
+    ),
+    order: str = Query("desc", description="Sort order: asc or desc"),
     session: Session = Depends(get_db),
 ) -> list[ProjectSession]:
     """
-    List all sessions (conversations) for a project.
+    List all sessions (conversations) for a project with filtering and sorting.
 
-    Returns paginated list of conversations with lightweight metadata,
-    sorted by start_time descending (newest first).
+    Returns paginated list of conversations with lightweight metadata.
+
+    Filters:
+    - developer: Filter by developer username
+    - outcome: Filter by success/failed status
+    - date_from/date_to: Filter by date range
+
+    Sorting:
+    - sort_by: Column to sort by (start_time, duration, status, developer)
+    - order: asc or desc
     """
+    from datetime import datetime
+
     project_repo = ProjectRepository(session)
 
     # Verify project exists
@@ -180,13 +269,68 @@ async def list_project_sessions(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Query conversations with pagination
+    # Build base query
     query = (
         session.query(Conversation, Developer.username)
         .outerjoin(Developer, Conversation.developer_id == Developer.id)
         .filter(Conversation.project_id == project_id)
-        .order_by(Conversation.start_time.desc())
     )
+
+    # Apply filters
+    if developer:
+        query = query.filter(Developer.username == developer)
+
+    if outcome:
+        if outcome == "success":
+            query = query.filter(Conversation.success.is_(True))
+        elif outcome == "failed":
+            query = query.filter(Conversation.success.is_(False))
+        # "all" or invalid values: no filter
+
+    if date_from:
+        try:
+            from_date = datetime.fromisoformat(date_from)
+            query = query.filter(Conversation.start_time >= from_date)
+        except ValueError:
+            pass  # Invalid date format, skip filter
+
+    if date_to:
+        try:
+            to_date = datetime.fromisoformat(date_to)
+            query = query.filter(Conversation.start_time <= to_date)
+        except ValueError:
+            pass  # Invalid date format, skip filter
+
+    # Apply sorting
+    if sort_by == "duration":
+        # Sort by calculated duration (end_time - start_time)
+        # Use database-agnostic approach with epoch timestamps
+        from sqlalchemy import Integer, cast, func
+
+        # Calculate duration as difference between Unix timestamps (in seconds)
+        # This works with both PostgreSQL and SQLite
+        end_epoch = func.extract("epoch", Conversation.end_time)
+        start_epoch = func.extract("epoch", Conversation.start_time)
+        duration_seconds = cast(end_epoch - start_epoch, Integer)
+
+        if order == "desc":
+            query = query.order_by(duration_seconds.desc().nulls_last())
+        else:
+            query = query.order_by(duration_seconds.asc().nulls_last())
+    elif sort_by == "status":
+        query = query.order_by(
+            Conversation.status.desc() if order == "desc" else Conversation.status.asc()
+        )
+    elif sort_by == "developer":
+        query = query.order_by(
+            Developer.username.desc() if order == "desc" else Developer.username.asc()
+        )
+    else:  # default: start_time
+        query = query.order_by(
+            Conversation.start_time.desc()
+            if order == "desc"
+            else Conversation.start_time.asc()
+        )
 
     # Apply pagination
     offset = (page - 1) * page_size

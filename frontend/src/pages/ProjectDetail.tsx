@@ -28,7 +28,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Folder,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
+import { SentimentTimelineChart } from '@/components/SentimentTimelineChart';
+import { ToolUsageChart } from '@/components/ToolUsageChart';
+import type { ProjectSessionFilters } from '@/lib/api';
 
 type Tab = 'stats' | 'sessions' | 'files';
 
@@ -63,28 +69,36 @@ export default function ProjectDetail() {
 
   return (
     <div className="container mx-auto px-6 py-8">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-3">
-          <Folder className="w-8 h-8 text-primary" />
-          <h1 className="text-4xl font-bold">{project?.name || 'Loading...'}</h1>
+      {/* Observatory Header */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center glow-amber">
+              <Folder className="w-6 h-6 text-slate-950" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-display tracking-wide text-foreground">
+                {project?.name?.toUpperCase() || 'LOADING...'}
+              </h1>
+              {project?.description && (
+                <p className="text-sm font-mono text-muted-foreground mt-1">
+                  {project.description}
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/projects')}
+            className="px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-cyan-400 border border-border/50 rounded-md hover:border-cyan-400/50 hover:bg-cyan-400/5 transition-all"
+          >
+            ← Projects
+          </button>
         </div>
-        {project?.description && (
-          <p className="text-muted-foreground text-lg mb-2">
-            {project.description}
-          </p>
-        )}
-        <button
-          onClick={() => navigate('/projects')}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          ← Back to Projects
-        </button>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-border mb-8">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+      {/* Observatory Tab Navigation */}
+      <div className="mb-8">
+        <nav className="flex gap-2 bg-slate-900/30 p-1 rounded-lg border border-border/50" aria-label="Tabs">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -94,27 +108,17 @@ export default function ProjectDetail() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  group inline-flex items-center py-4 px-1 border-b-2 font-medium text-sm
+                  flex-1 inline-flex items-center justify-center gap-2 py-3 px-4 rounded-md font-mono text-xs font-semibold uppercase tracking-wider
                   transition-all duration-200
                   ${
                     isActive
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                      ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
                   }
                 `}
                 aria-current={isActive ? 'page' : undefined}
               >
-                <Icon
-                  className={`
-                    -ml-0.5 mr-2 h-5 w-5 transition-colors
-                    ${
-                      isActive
-                        ? 'text-primary'
-                        : 'text-muted-foreground group-hover:text-foreground'
-                    }
-                  `}
-                  aria-hidden="true"
-                />
+                <Icon className="h-4 w-4" aria-hidden="true" />
                 {tab.label}
               </button>
             );
@@ -135,9 +139,11 @@ export default function ProjectDetail() {
 // ===== Stats Tab =====
 
 function StatsTab({ projectId }: { projectId: string }) {
+  const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('all');
+
   const { data: stats, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
-    queryKey: ['projects', projectId, 'stats'],
-    queryFn: () => getProjectStats(projectId),
+    queryKey: ['projects', projectId, 'stats', dateRange],
+    queryFn: () => getProjectStats(projectId, dateRange),
     refetchInterval: 15000, // Auto-refresh every 15 seconds
     staleTime: 0, // Always fetch fresh data
   });
@@ -175,130 +181,172 @@ function StatsTab({ projectId }: { projectId: string }) {
     ? Math.round(stats.avg_session_duration_seconds / 60)
     : null;
 
+  const dateRangeLabels = {
+    '7d': 'Last 7 days',
+    '30d': 'Last 30 days',
+    '90d': 'Last 90 days',
+    'all': 'All time'
+  };
+
   return (
     <div className="space-y-8">
-      {/* Auto-refresh indicator */}
-      <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground">
-        {isFetching && (
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span>Refreshing...</span>
+      {/* Observatory Time Range Control */}
+      <div className="flex items-center justify-between gap-4">
+        {/* Date Range Buttons */}
+        <div className="flex items-center gap-3">
+          <Clock className="w-4 h-4 text-cyan-400" />
+          <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Time Range:</span>
+          <div className="flex gap-2">
+            {(['7d', '30d', '90d', 'all'] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => setDateRange(range)}
+                className={`
+                  px-4 py-2 font-mono text-xs font-semibold uppercase tracking-wider rounded-md transition-all duration-200
+                  ${
+                    dateRange === range
+                      ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+                      : 'border border-border/50 text-muted-foreground hover:text-foreground hover:bg-accent/30 hover:border-border'
+                  }
+                `}
+              >
+                {dateRangeLabels[range]}
+              </button>
+            ))}
           </div>
-        )}
-        {dataUpdatedAt && !isFetching && (
-          <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
-        )}
+        </div>
+
+        {/* Auto-refresh indicator */}
+        <div className="flex items-center gap-2">
+          {isFetching ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-cyan-400/10 border border-cyan-400/30">
+              <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full pulse-dot" />
+              <span className="text-xs font-mono text-cyan-400">SYNCING</span>
+            </div>
+          ) : dataUpdatedAt ? (
+            <span className="text-xs font-mono text-muted-foreground">
+              SYNC {formatDistanceToNow(dataUpdatedAt, { addSuffix: true }).toUpperCase()}
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      {/* Metrics Grid */}
+      {/* Observatory Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Total Sessions */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Sessions
-            </p>
-            <Activity className="w-5 h-5 text-muted-foreground" />
+        <div className="observatory-card p-6 group hover:border-cyan-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
+              Sessions
+            </span>
+            <Activity className="w-5 h-5 text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-cyan-400 glow-cyan mb-3">
             {stats.session_count.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {stats.developer_count} developer{stats.developer_count !== 1 ? 's' : ''}
+          <p className="text-xs font-mono text-muted-foreground">
+            <span className="text-foreground/80">{stats.developer_count}</span> developer{stats.developer_count !== 1 ? 's' : ''}
           </p>
         </div>
 
         {/* Total Messages */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Messages
-            </p>
-            <MessageSquare className="w-5 h-5 text-muted-foreground" />
+        <div className="observatory-card p-6 group hover:border-emerald-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
+              Messages
+            </span>
+            <MessageSquare className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-emerald-400 glow-emerald mb-3">
             {stats.total_messages.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            {stats.session_count > 0
-              ? `${Math.round(stats.total_messages / stats.session_count)} avg per session`
-              : 'N/A'}
+          <p className="text-xs font-mono text-muted-foreground">
+            avg{' '}
+            <span className="text-foreground/80">
+              {stats.session_count > 0
+                ? Math.round(stats.total_messages / stats.session_count).toLocaleString()
+                : 'N/A'}
+            </span>
+            {' '}per session
           </p>
         </div>
 
         {/* Files Changed */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-amber-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Files Changed
-            </p>
-            <FileText className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <FileText className="w-5 h-5 text-amber-400/60 group-hover:text-amber-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-amber-400 glow-amber mb-3">
             {stats.total_files_changed.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Across all sessions
+          <p className="text-xs font-mono text-muted-foreground">
+            across all sessions
           </p>
         </div>
 
         {/* Success Rate */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-emerald-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Success Rate
-            </p>
-            <TrendingUp className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <TrendingUp className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-emerald-400 glow-emerald mb-3">
             {stats.success_rate !== null
               ? `${Math.round(stats.success_rate * 100)}%`
               : 'N/A'}
           </p>
           {stats.success_rate !== null && (
-            <div className="mt-3">
-              <div className="w-full bg-muted rounded-full h-2">
-                <div
-                  className="bg-green-500 h-2 rounded-full transition-all"
-                  style={{ width: `${stats.success_rate * 100}%` }}
-                />
-              </div>
+            <div className="h-1.5 bg-slate-900/50 rounded-full overflow-hidden border border-border/30">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all"
+                style={{ width: `${stats.success_rate * 100}%` }}
+              />
             </div>
           )}
         </div>
 
         {/* Avg Session Duration */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-purple-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Avg Duration
-            </p>
-            <Clock className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <Clock className="w-5 h-5 text-purple-400/60 group-hover:text-purple-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
+          <p className="text-4xl font-mono font-bold text-purple-400 glow-purple mb-3">
             {avgDurationMinutes !== null ? `${avgDurationMinutes}m` : 'N/A'}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Per session
+          <p className="text-xs font-mono text-muted-foreground">
+            per session
           </p>
         </div>
 
         {/* Developers */}
-        <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
+        <div className="observatory-card p-6 group hover:border-cyan-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider uppercase">
               Developers
-            </p>
-            <Users className="w-5 h-5 text-muted-foreground" />
+            </span>
+            <Users className="w-5 h-5 text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-4xl font-bold font-mono">
-            {stats.developer_count}
+          <p className="text-4xl font-mono font-bold text-cyan-400 glow-cyan mb-3">
+            {stats.developer_count.toLocaleString()}
           </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Active contributors
+          <p className="text-xs font-mono text-muted-foreground">
+            active contributors
           </p>
         </div>
       </div>
+
+      {/* Sentiment Timeline */}
+      {stats.sentiment_timeline && stats.sentiment_timeline.length > 0 && (
+        <SentimentTimelineChart data={stats.sentiment_timeline} />
+      )}
 
       {/* Insights Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -341,25 +389,7 @@ function StatsTab({ projectId }: { projectId: string }) {
 
       {/* Tool Usage */}
       {Object.keys(stats.tool_usage).length > 0 && (
-        <div className="bg-card border border-border rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Tool Usage</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {Object.entries(stats.tool_usage)
-              .sort(([, a], [, b]) => b - a)
-              .slice(0, 8)
-              .map(([tool, count]) => (
-                <div
-                  key={tool}
-                  className="flex flex-col items-center justify-center p-4 bg-muted rounded-lg"
-                >
-                  <p className="text-2xl font-bold font-mono">{count}</p>
-                  <p className="text-xs text-muted-foreground text-center mt-1">
-                    {tool}
-                  </p>
-                </div>
-              ))}
-          </div>
-        </div>
+        <ToolUsageChart toolUsage={stats.tool_usage} />
       )}
     </div>
   );
@@ -371,18 +401,56 @@ function SessionsTab({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // Filters and sorting
+  const [developer, setDeveloper] = useState<string>('');
+  const [outcome, setOutcome] = useState<'success' | 'failed' | 'partial' | ''>('');
+  const [sortBy, setSortBy] = useState<'start_time' | 'duration' | 'messages'>('start_time');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+
   const page = parseInt(searchParams.get('page') || '1');
   const pageSize = 20;
 
+  // Get stats to extract unique developers
+  const { data: stats } = useQuery({
+    queryKey: ['projects', projectId, 'stats'],
+    queryFn: () => getProjectStats(projectId),
+  });
+
+  // Build filters object
+  const filters: ProjectSessionFilters = {
+    ...(developer && { developer }),
+    ...(outcome && { outcome }),
+    sort_by: sortBy,
+    order,
+  };
+
   const { data: sessions, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
-    queryKey: ['projects', projectId, 'sessions', { page, pageSize }],
-    queryFn: () => getProjectSessions(projectId, page, pageSize),
+    queryKey: ['projects', projectId, 'sessions', { page, pageSize, filters }],
+    queryFn: () => getProjectSessions(projectId, page, pageSize, filters),
     refetchInterval: 15000, // Auto-refresh
     staleTime: 0,
   });
 
   const handlePageChange = (newPage: number) => {
     setSearchParams({ page: String(newPage) });
+  };
+
+  const handleSort = (column: 'start_time' | 'duration' | 'messages') => {
+    if (sortBy === column) {
+      // Toggle order if clicking same column
+      setOrder(order === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new column and default to desc
+      setSortBy(column);
+      setOrder('desc');
+    }
+  };
+
+  const clearFilters = () => {
+    setDeveloper('');
+    setOutcome('');
+    setSortBy('start_time');
+    setOrder('desc');
   };
 
   if (error) {
@@ -393,19 +461,77 @@ function SessionsTab({ projectId }: { projectId: string }) {
     );
   }
 
+  const hasActiveFilters = developer || outcome || sortBy !== 'start_time' || order !== 'desc';
+
   return (
     <div className="space-y-6">
-      {/* Auto-refresh indicator */}
-      <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground">
-        {isFetching && (
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span>Refreshing...</span>
+      {/* Filters and Sorting */}
+      <div className="bg-card border border-border rounded-lg p-6">
+        <div className="flex items-start justify-between gap-6">
+          {/* Filter Controls */}
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Developer Filter */}
+            <div>
+              <label htmlFor="developer-filter" className="block text-sm font-medium text-muted-foreground mb-2">
+                Developer
+              </label>
+              <select
+                id="developer-filter"
+                value={developer}
+                onChange={(e) => setDeveloper(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">All Developers</option>
+                {stats?.developers.map((dev) => (
+                  <option key={dev} value={dev}>
+                    {dev}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Outcome Filter */}
+            <div>
+              <label htmlFor="outcome-filter" className="block text-sm font-medium text-muted-foreground mb-2">
+                Outcome
+              </label>
+              <select
+                id="outcome-filter"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value as typeof outcome)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">All Outcomes</option>
+                <option value="success">Success</option>
+                <option value="partial">Partial</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
           </div>
-        )}
-        {dataUpdatedAt && !isFetching && (
-          <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
-        )}
+
+          {/* Clear Filters Button */}
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="px-4 py-2 text-sm bg-muted hover:bg-muted/80 rounded-lg transition-colors"
+            >
+              Clear Filters
+            </button>
+          )}
+        </div>
+
+        {/* Auto-refresh indicator */}
+        <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground mt-4">
+          {isFetching && (
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span>Refreshing...</span>
+            </div>
+          )}
+          {dataUpdatedAt && !isFetching && (
+            <span>Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}</span>
+          )}
+        </div>
       </div>
 
       {/* Sessions Table */}
@@ -423,21 +549,57 @@ function SessionsTab({ projectId }: { projectId: string }) {
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Start Time
+                  {/* Sortable: Start Time */}
+                  <th
+                    onClick={() => handleSort('start_time')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Start Time
+                      {sortBy === 'start_time' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Duration
+                  {/* Sortable: Duration */}
+                  <th
+                    onClick={() => handleSort('duration')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Duration
+                      {sortBy === 'duration' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
+                  {/* Non-sortable: Status */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Status
                   </th>
+                  {/* Non-sortable: Developer */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Developer
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Messages
+                  {/* Sortable: Messages */}
+                  <th
+                    onClick={() => handleSort('messages')}
+                    className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      Messages
+                      {sortBy === 'messages' ? (
+                        order === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />
+                      ) : (
+                        <ArrowUpDown className="w-4 h-4 opacity-30" />
+                      )}
+                    </div>
                   </th>
+                  {/* Non-sortable: Files */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Files
                   </th>
