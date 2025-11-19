@@ -25,6 +25,7 @@ router = APIRouter()
 async def get_project_stats(
     project_id: UUID,
     session: Session = Depends(get_db),
+    date_range: Optional[str] = Query(None, description="Date range filter: 7d, 30d, 90d, or all (default: all)"),
 ) -> ProjectStats:
     """
     Get aggregated statistics for a project.
@@ -35,7 +36,15 @@ async def get_project_stats(
     - Top features and problems (from AI tags)
     - Tool usage distribution
     - Developer participation
+    - Sentiment timeline
+
+    Args:
+        project_id: UUID of the project
+        date_range: Optional date range filter (7d, 30d, 90d, all). Defaults to 'all'.
+                    Filters conversations by start_time >= cutoff date.
     """
+    from datetime import datetime, timedelta
+
     project_repo = ProjectRepository(session)
 
     # Verify project exists
@@ -43,10 +52,23 @@ async def get_project_stats(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get all conversations for this project
-    conversations = (
-        session.query(Conversation).filter(Conversation.project_id == project_id).all()
-    )
+    # Calculate date cutoff based on date_range
+    cutoff_date = None
+    if date_range:
+        now = datetime.now()
+        if date_range == "7d":
+            cutoff_date = now - timedelta(days=7)
+        elif date_range == "30d":
+            cutoff_date = now - timedelta(days=30)
+        elif date_range == "90d":
+            cutoff_date = now - timedelta(days=90)
+        # "all" or invalid values default to no cutoff (None)
+
+    # Get conversations for this project, optionally filtered by date
+    query = session.query(Conversation).filter(Conversation.project_id == project_id)
+    if cutoff_date:
+        query = query.filter(Conversation.start_time >= cutoff_date)
+    conversations = query.all()
 
     if not conversations:
         # Return empty stats
