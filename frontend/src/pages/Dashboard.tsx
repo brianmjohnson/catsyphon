@@ -1,10 +1,11 @@
 /**
- * Dashboard page - Overview statistics and metrics.
+ * Dashboard page - Observatory Mission Control.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
+import { Activity, MessageSquare, FolderOpen, Users, TrendingUp, AlertTriangle, Terminal } from 'lucide-react';
 import { getOverviewStats } from '@/lib/api';
 
 export default function Dashboard() {
@@ -17,9 +18,13 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">Loading dashboard...</p>
+      <div className="min-h-screen bg-background flex items-center justify-center grid-pattern">
+        <div className="text-center">
+          <div className="relative">
+            <div className="animate-spin rounded-full h-16 w-16 border-2 border-transparent border-t-cyan-400 border-r-cyan-400 mx-auto mb-6 glow-cyan"></div>
+            <div className="absolute inset-0 animate-ping rounded-full h-16 w-16 border border-cyan-400/20 mx-auto"></div>
+          </div>
+          <p className="text-sm font-mono text-muted-foreground tracking-wider">LOADING TELEMETRY DATA...</p>
         </div>
       </div>
     );
@@ -28,9 +33,13 @@ export default function Dashboard() {
   if (error) {
     return (
       <div className="container mx-auto p-6">
-        <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
-          <p className="text-destructive">
-            Error loading dashboard: {error.message}
+        <div className="observatory-card border-destructive/50 p-6">
+          <div className="flex items-center gap-3 mb-2">
+            <AlertTriangle className="w-5 h-5 text-destructive" />
+            <h3 className="font-heading text-lg text-destructive">System Error</h3>
+          </div>
+          <p className="font-mono text-sm text-destructive/80">
+            {error.message}
           </p>
         </div>
       </div>
@@ -42,188 +51,207 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="mb-8">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-4xl font-bold mb-2">CatSyphon Dashboard</h1>
-            <p className="text-muted-foreground">
-              Overview of conversation logs and coding agent activity
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {isFetching && (
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            )}
-            {dataUpdatedAt && (
-              <span className="text-xs text-muted-foreground">
-                Updated {formatDistanceToNow(dataUpdatedAt, { addSuffix: true })}
-              </span>
-            )}
+    <div className="min-h-screen bg-background">
+      {/* Mission Control Hero */}
+      <div className="relative bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border-b border-border overflow-hidden">
+        {/* Grid pattern background */}
+        <div className="absolute inset-0 grid-pattern opacity-20" />
+
+        {/* Scan line effect */}
+        <div className="absolute inset-0 scan-line" />
+
+        {/* Content */}
+        <div className="container mx-auto px-6 py-12 relative z-10">
+          <div className="flex items-start justify-between mb-8">
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <Activity className="w-8 h-8 text-cyan-400" />
+                <h1 className="text-4xl font-display tracking-wide text-foreground">
+                  MISSION CONTROL
+                </h1>
+              </div>
+              <p className="text-muted-foreground font-mono text-sm tracking-wide">
+                Observatory monitoring • Real-time telemetry • Agent activity analysis
+              </p>
+            </div>
+
+            {/* Live status indicator */}
+            <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-accent/30 border border-border backdrop-blur-sm">
+              {isFetching && (
+                <div className="w-2 h-2 bg-cyan-400 rounded-full pulse-dot" />
+              )}
+              {dataUpdatedAt && (
+                <span className="text-xs font-mono text-muted-foreground">
+                  SYNC {formatDistanceToNow(dataUpdatedAt, { addSuffix: true }).toUpperCase()}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Overview Metrics Cards */}
+      <div className="container mx-auto p-6">
+
+      {/* Observatory Telemetry Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Conversations
-            </p>
-            <svg
-              className="w-5 h-5 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-              />
-            </svg>
+        {/* Conversations Metric */}
+        <div className="observatory-card p-6 group hover:border-cyan-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider">
+              CONVERSATIONS
+            </span>
+            <MessageSquare className="w-5 h-5 text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
           </div>
-          <p className="text-3xl font-bold">{stats.total_conversations.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {stats.total_main_conversations} main, {stats.total_agent_conversations} agents
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {stats.recent_conversations} in last 7 days
-          </p>
+          <div className="mb-3">
+            <p className="text-4xl font-mono font-bold text-cyan-400 glow-cyan">
+              {stats.total_conversations.toLocaleString()}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-mono text-muted-foreground">
+              <span className="text-foreground/80">{stats.total_main_conversations}</span> main sessions
+            </p>
+            <p className="text-xs font-mono text-muted-foreground">
+              <span className="text-foreground/80">{stats.total_agent_conversations}</span> agent spawns
+            </p>
+            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border/50">
+              <div className="w-1 h-1 rounded-full bg-emerald-400 pulse-dot" />
+              <p className="text-xs font-mono text-emerald-400">
+                +{stats.recent_conversations} last 7d
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Messages
-            </p>
-            <svg
-              className="w-5 h-5 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
-              />
-            </svg>
+        {/* Messages Metric */}
+        <div className="observatory-card p-6 group hover:border-emerald-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider">
+              MESSAGES
+            </span>
+            <Activity className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
           </div>
-          <p className="text-3xl font-bold">{stats.total_messages.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {stats.total_conversations > 0
-              ? `${Math.round(stats.total_messages / stats.total_conversations)} avg per conversation`
-              : 'N/A'}
-          </p>
+          <div className="mb-3">
+            <p className="text-4xl font-mono font-bold text-emerald-400 glow-emerald">
+              {stats.total_messages.toLocaleString()}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-mono text-muted-foreground">
+              avg{' '}
+              <span className="text-foreground/80">
+                {stats.total_conversations > 0
+                  ? Math.round(stats.total_messages / stats.total_conversations).toLocaleString()
+                  : 'N/A'}
+              </span>
+              {' '}per session
+            </p>
+          </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Projects
-            </p>
-            <svg
-              className="w-5 h-5 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-              />
-            </svg>
+        {/* Projects Metric */}
+        <div className="observatory-card p-6 group hover:border-amber-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider">
+              PROJECTS
+            </span>
+            <FolderOpen className="w-5 h-5 text-amber-400/60 group-hover:text-amber-400 transition-colors" />
           </div>
-          <p className="text-3xl font-bold">{stats.total_projects.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Tracked projects
-          </p>
+          <div className="mb-3">
+            <p className="text-4xl font-mono font-bold text-amber-400 glow-amber">
+              {stats.total_projects.toLocaleString()}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-mono text-muted-foreground">
+              tracked repositories
+            </p>
+          </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Developers
-            </p>
-            <svg
-              className="w-5 h-5 text-muted-foreground"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-              />
-            </svg>
+        {/* Developers Metric */}
+        <div className="observatory-card p-6 group hover:border-purple-400/30 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-mono text-muted-foreground tracking-wider">
+              DEVELOPERS
+            </span>
+            <Users className="w-5 h-5 text-purple-400/60 group-hover:text-purple-400 transition-colors" />
           </div>
-          <p className="text-3xl font-bold">{stats.total_developers.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Active developers
-          </p>
+          <div className="mb-3">
+            <p className="text-4xl font-mono font-bold text-purple-400 glow-purple">
+              {stats.total_developers.toLocaleString()}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-mono text-muted-foreground">
+              active contributors
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Success Rate */}
+      {/* Success Rate Observatory Panel */}
       {stats.success_rate !== null && (
-        <div className="bg-card border border-border rounded-lg p-6 mb-8">
-          <h2 className="text-xl font-semibold mb-4">Success Rate</h2>
-          <div className="flex items-center gap-4">
+        <div className="observatory-card p-6 mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <TrendingUp className="w-5 h-5 text-emerald-400" />
+            <h2 className="text-xl font-heading font-semibold text-foreground">
+              Mission Success Rate
+            </h2>
+          </div>
+          <div className="flex items-center gap-6">
             <div className="flex-1">
-              <div className="relative h-8 bg-muted rounded-full overflow-hidden">
+              <div className="relative h-6 bg-slate-900/50 rounded-full overflow-hidden border border-border/50">
                 <div
-                  className="absolute top-0 left-0 h-full bg-green-500 transition-all"
+                  className="absolute top-0 left-0 h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all glow-emerald"
                   style={{ width: `${stats.success_rate}%` }}
                 />
               </div>
             </div>
-            <div className="text-3xl font-bold">
+            <div className="text-4xl font-mono font-bold text-emerald-400 glow-emerald min-w-[120px] text-right">
               {stats.success_rate.toFixed(1)}%
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mt-2">
-            Of conversations with success status recorded
+          <p className="text-xs font-mono text-muted-foreground mt-3">
+            Success metric calculated from tagged conversation outcomes
           </p>
         </div>
       )}
 
-      {/* Conversations by Status and Agent Type */}
+      {/* Observatory Data Analysis Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Status Breakdown */}
-        <div className="bg-card border border-border rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">By Status</h2>
-          <div className="space-y-3">
+        <div className="observatory-card p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Terminal className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-xl font-heading font-semibold text-foreground">
+              Status Distribution
+            </h2>
+          </div>
+          <div className="space-y-4">
             {Object.entries(stats.conversations_by_status)
               .sort(([, a], [, b]) => b - a)
               .map(([status, count]) => {
                 const percentage = (count / stats.total_conversations) * 100;
+                const barColor =
+                  status === 'completed' ? 'from-emerald-500 to-emerald-400' :
+                  status === 'failed' ? 'from-rose-500 to-rose-400' :
+                  status === 'in_progress' ? 'from-cyan-500 to-cyan-400' :
+                  'from-amber-500 to-amber-400';
+
                 return (
                   <div key={status}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium capitalize">{status}</span>
-                      <span className="text-sm text-muted-foreground">
-                        {count} ({percentage.toFixed(1)}%)
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-mono text-foreground/90 uppercase tracking-wide">
+                        {status.replace('_', ' ')}
+                      </span>
+                      <span className="text-sm font-mono text-muted-foreground">
+                        {count.toLocaleString()} <span className="text-xs">({percentage.toFixed(1)}%)</span>
                       </span>
                     </div>
-                    <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+                    <div className="relative h-2 bg-slate-900/50 rounded-full overflow-hidden border border-border/30">
                       <div
-                        className={`absolute top-0 left-0 h-full transition-all ${
-                          status === 'completed'
-                            ? 'bg-green-500'
-                            : status === 'failed'
-                              ? 'bg-red-500'
-                              : status === 'in_progress'
-                                ? 'bg-blue-500'
-                                : 'bg-yellow-500'
-                        }`}
+                        className={`absolute top-0 left-0 h-full bg-gradient-to-r ${barColor} transition-all`}
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
@@ -234,24 +262,31 @@ export default function Dashboard() {
         </div>
 
         {/* Agent Type Breakdown */}
-        <div className="bg-card border border-border rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4">By Agent Type</h2>
-          <div className="space-y-3">
+        <div className="observatory-card p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Activity className="w-5 h-5 text-purple-400" />
+            <h2 className="text-xl font-heading font-semibold text-foreground">
+              Agent Distribution
+            </h2>
+          </div>
+          <div className="space-y-4">
             {Object.entries(stats.conversations_by_agent)
               .sort(([, a], [, b]) => b - a)
               .map(([agent, count]) => {
                 const percentage = (count / stats.total_conversations) * 100;
                 return (
                   <div key={agent}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium font-mono">{agent}</span>
-                      <span className="text-sm text-muted-foreground">
-                        {count} ({percentage.toFixed(1)}%)
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-mono text-foreground/90 uppercase tracking-wide">
+                        {agent}
+                      </span>
+                      <span className="text-sm font-mono text-muted-foreground">
+                        {count.toLocaleString()} <span className="text-xs">({percentage.toFixed(1)}%)</span>
                       </span>
                     </div>
-                    <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+                    <div className="relative h-2 bg-slate-900/50 rounded-full overflow-hidden border border-border/30">
                       <div
-                        className="absolute top-0 left-0 h-full bg-purple-500 transition-all"
+                        className="absolute top-0 left-0 h-full bg-gradient-to-r from-purple-500 to-purple-400 transition-all"
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
@@ -262,61 +297,57 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Quick Links */}
-      <div className="bg-card border border-border rounded-lg p-6">
-        <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
+      {/* Command Center - Quick Actions */}
+      <div className="observatory-card p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Terminal className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-xl font-heading font-semibold text-foreground">
+            Command Center
+          </h2>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Link
             to="/conversations"
-            className="flex items-center gap-3 p-4 border border-border rounded-md hover:bg-accent transition-colors"
+            className="group relative p-5 border border-border/50 rounded-lg hover:border-cyan-400/50 transition-all overflow-hidden"
           >
-            <svg
-              className="w-6 h-6 text-primary"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-              />
-            </svg>
-            <div>
-              <p className="font-medium">Browse Conversations</p>
-              <p className="text-sm text-muted-foreground">
-                View and filter all conversations
-              </p>
+            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-cyan-400/10 border border-cyan-400/30 flex items-center justify-center group-hover:glow-cyan transition-all">
+                <MessageSquare className="w-5 h-5 text-cyan-400" />
+              </div>
+              <div>
+                <p className="font-mono text-sm font-semibold text-foreground mb-1">
+                  BROWSE_SESSIONS
+                </p>
+                <p className="text-xs font-mono text-muted-foreground">
+                  View and filter all conversations
+                </p>
+              </div>
             </div>
           </Link>
 
           <Link
             to="/conversations?status=failed"
-            className="flex items-center gap-3 p-4 border border-border rounded-md hover:bg-accent transition-colors"
+            className="group relative p-5 border border-border/50 rounded-lg hover:border-rose-400/50 transition-all overflow-hidden"
           >
-            <svg
-              className="w-6 h-6 text-destructive"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <div>
-              <p className="font-medium">Failed Conversations</p>
-              <p className="text-sm text-muted-foreground">
-                Review conversations that failed
-              </p>
+            <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-rose-400/10 border border-rose-400/30 flex items-center justify-center transition-all">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <p className="font-mono text-sm font-semibold text-foreground mb-1">
+                  FAILED_SESSIONS
+                </p>
+                <p className="text-xs font-mono text-muted-foreground">
+                  Review failed conversation logs
+                </p>
+              </div>
             </div>
           </Link>
         </div>
       </div>
+    </div>
     </div>
   );
 }
