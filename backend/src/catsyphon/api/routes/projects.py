@@ -4,6 +4,8 @@ Project analytics API routes.
 Endpoints for project-level statistics, sessions, and file aggregations.
 """
 
+from collections import defaultdict
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -11,10 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 
-from catsyphon.api.schemas import ProjectStats, ProjectSession, ProjectFileAggregation
+from catsyphon.api.schemas import ProjectStats, ProjectSession, ProjectFileAggregation, SentimentTimelinePoint
 from catsyphon.db.connection import get_db
 from catsyphon.db.repositories import ProjectRepository, ConversationRepository
-from catsyphon.models.db import Conversation, Developer, FileTouched, Message
+from catsyphon.models.db import Conversation, Developer, Epoch, FileTouched, Message
 
 router = APIRouter()
 
@@ -143,6 +145,41 @@ async def get_project_stats(
     )
     developer_names = [d.username for d in developers]
 
+    # Sentiment timeline (group epochs by date)
+    sentiment_timeline: list[SentimentTimelinePoint] = []
+    if conversations:
+        conversation_ids = [c.id for c in conversations]
+        epochs = (
+            session.query(Epoch)
+            .filter(Epoch.conversation_id.in_(conversation_ids))
+            .filter(Epoch.sentiment_score.isnot(None))
+            .all()
+        )
+
+        # Group by date
+        date_sentiments: dict[str, list[float]] = defaultdict(list)
+        date_conversations: dict[str, set[UUID]] = defaultdict(set)
+
+        for epoch in epochs:
+            if epoch.start_time and epoch.sentiment_score is not None:
+                date_str = epoch.start_time.date().isoformat()
+                date_sentiments[date_str].append(epoch.sentiment_score)
+                date_conversations[date_str].add(epoch.conversation_id)
+
+        # Calculate averages and create timeline points
+        for date_str in sorted(date_sentiments.keys()):
+            sentiments = date_sentiments[date_str]
+            avg_sentiment = sum(sentiments) / len(sentiments)
+            session_count_for_date = len(date_conversations[date_str])
+
+            sentiment_timeline.append(
+                SentimentTimelinePoint(
+                    date=date_str,
+                    avg_sentiment=avg_sentiment,
+                    session_count=session_count_for_date,
+                )
+            )
+
     return ProjectStats(
         project_id=project_id,
         session_count=session_count,
@@ -157,6 +194,7 @@ async def get_project_stats(
         tool_usage=tool_usage,
         developer_count=len(developer_ids),
         developers=developer_names,
+        sentiment_timeline=sentiment_timeline,
     )
 
 
