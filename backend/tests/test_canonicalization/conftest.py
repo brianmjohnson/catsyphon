@@ -2,15 +2,15 @@
 
 import pytest
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy import event
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 from catsyphon.models.db import Base, Conversation, Epoch, Message, Organization, Workspace
 
 
 @pytest.fixture(scope="session")
-def async_test_engine():
-    """Create async test database engine using SQLite in-memory."""
+def test_engine():
+    """Create test database engine using SQLite in-memory."""
     from sqlalchemy import JSON
     from sqlalchemy.dialects import postgresql
 
@@ -22,57 +22,50 @@ def async_test_engine():
                 if isinstance(column.type, postgresql.JSONB):
                     column.type = JSON()
 
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
+    engine = create_engine(
+        "sqlite:///:memory:",
         echo=False,
     )
 
-    # Create tables synchronously for test setup
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(_create_tables(engine))
+    # Create tables
+    Base.metadata.create_all(bind=engine)
 
     yield engine
 
-    loop.run_until_complete(engine.dispose())
-
-
-async def _create_tables(engine):
-    """Helper to create tables async."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine.dispose()
 
 
 @pytest.fixture(scope="function")
-async def test_session(async_test_engine):
-    """Create async test session with rollback."""
-    async_session = async_sessionmaker(
-        async_test_engine,
-        class_=AsyncSession,
+def test_session(test_engine):
+    """Create test session with rollback."""
+    SessionLocal = sessionmaker(
+        bind=test_engine,
         expire_on_commit=False,
     )
 
-    async with async_session() as session:
-        async with session.begin():
-            yield session
-            await session.rollback()
+    session = SessionLocal()
+    try:
+        yield session
+        session.rollback()
+    finally:
+        session.close()
 
 
 @pytest.fixture
-async def sample_organization(test_session):
+def sample_organization(test_session):
     """Create a sample organization for testing."""
     org = Organization(
         name="Test Organization",
         slug="test-org",
     )
     test_session.add(org)
-    await test_session.flush()
-    await test_session.refresh(org)
+    test_session.flush()
+    test_session.refresh(org)
     return org
 
 
 @pytest.fixture
-async def sample_workspace(test_session, sample_organization):
+def sample_workspace(test_session, sample_organization):
     """Create a sample workspace for testing."""
     workspace = Workspace(
         organization_id=sample_organization.id,
@@ -80,13 +73,13 @@ async def sample_workspace(test_session, sample_organization):
         slug="test-workspace",
     )
     test_session.add(workspace)
-    await test_session.flush()
-    await test_session.refresh(workspace)
+    test_session.flush()
+    test_session.refresh(workspace)
     return workspace
 
 
 @pytest.fixture
-async def sample_conversation(test_session, sample_workspace):
+def sample_conversation(test_session, sample_workspace):
     """Create a sample conversation for testing."""
     conversation = Conversation(
         workspace_id=sample_workspace.id,
@@ -98,13 +91,13 @@ async def sample_conversation(test_session, sample_workspace):
         epoch_count=1,
     )
     test_session.add(conversation)
-    await test_session.flush()
-    await test_session.refresh(conversation)
+    test_session.flush()
+    test_session.refresh(conversation)
     return conversation
 
 
 @pytest.fixture
-async def sample_epoch(test_session, sample_conversation):
+def sample_epoch(test_session, sample_conversation):
     """Create a sample epoch for testing."""
     epoch = Epoch(
         conversation_id=sample_conversation.id,
@@ -112,13 +105,13 @@ async def sample_epoch(test_session, sample_conversation):
         start_time=datetime.now(),
     )
     test_session.add(epoch)
-    await test_session.flush()
-    await test_session.refresh(epoch)
+    test_session.flush()
+    test_session.refresh(epoch)
     return epoch
 
 
 @pytest.fixture
-async def sample_message(test_session, sample_conversation, sample_epoch):
+def sample_message(test_session, sample_conversation, sample_epoch):
     """Create a sample message for testing."""
     message = Message(
         conversation_id=sample_conversation.id,
@@ -129,6 +122,6 @@ async def sample_message(test_session, sample_conversation, sample_epoch):
         sequence=0,
     )
     test_session.add(message)
-    await test_session.flush()
-    await test_session.refresh(message)
+    test_session.flush()
+    test_session.refresh(message)
     return message

@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from catsyphon.canonicalization import (
     CanonicalConfig,
@@ -32,15 +32,15 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
     4. Cache and return
     """
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: Session):
         """Initialize repository.
 
         Args:
             session: Database session
         """
-        super().__init__(session, ConversationCanonical)
+        super().__init__(ConversationCanonical, session)
 
-    async def get_or_generate(
+    def get_or_generate(
         self,
         conversation: any,  # Conversation model
         canonical_type: CanonicalType,
@@ -61,7 +61,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
             CanonicalConversation representation
         """
         # Check cache
-        cached = await self.get_cached(
+        cached = self.get_cached(
             conversation_id=conversation.id,
             canonical_type=canonical_type.value,
         )
@@ -94,7 +94,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
         )
 
         # Save to database
-        await self.save_canonical(
+        self.save_canonical(
             conversation_id=conversation.id,
             canonical_type=canonical_type.value,
             canonical=canonical,
@@ -102,7 +102,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
 
         return canonical
 
-    async def get_cached(
+    def get_cached(
         self,
         conversation_id: UUID,
         canonical_type: str,
@@ -124,7 +124,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
             .limit(1)
         )
 
-        result = await self.session.execute(stmt)
+        result = self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     def should_regenerate(
@@ -186,7 +186,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
         )
         return False
 
-    async def save_canonical(
+    def save_canonical(
         self,
         conversation_id: UUID,
         canonical_type: str,
@@ -226,8 +226,8 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
         )
 
         self.session.add(db_canonical)
-        await self.session.flush()
-        await self.session.refresh(db_canonical)
+        self.session.flush()
+        self.session.refresh(db_canonical)
 
         logger.info(
             f"Saved canonical for conversation {conversation_id} "
@@ -236,7 +236,7 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
 
         return db_canonical
 
-    async def invalidate(
+    def invalidate(
         self,
         conversation_id: Optional[UUID] = None,
         canonical_type: Optional[str] = None,
@@ -257,13 +257,13 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
         if canonical_type:
             stmt = stmt.where(ConversationCanonical.canonical_type == canonical_type)
 
-        result = await self.session.execute(stmt)
+        result = self.session.execute(stmt)
         canonicals = result.scalars().all()
 
         for canonical in canonicals:
-            await self.session.delete(canonical)
+            self.session.delete(canonical)
 
-        await self.session.flush()
+        self.session.flush()
 
         count = len(canonicals)
         logger.info(

@@ -10,13 +10,12 @@ from catsyphon.db.repositories.canonical import CanonicalRepository
 from catsyphon.models.db import Conversation, ConversationCanonical, Epoch, Message, Workspace, Organization
 
 
-@pytest.mark.asyncio
-async def test_get_cached_returns_none_when_no_cache(test_session):
+def test_get_cached_returns_none_when_no_cache(test_session):
     """Test get_cached returns None when no cached canonical exists."""
     repo = CanonicalRepository(test_session)
     conversation_id = uuid4()
 
-    cached = await repo.get_cached(
+    cached = repo.get_cached(
         conversation_id=conversation_id,
         canonical_type="tagging",
     )
@@ -24,8 +23,7 @@ async def test_get_cached_returns_none_when_no_cache(test_session):
     assert cached is None
 
 
-@pytest.mark.asyncio
-async def test_save_and_get_canonical(test_session, sample_conversation):
+def test_save_and_get_canonical(test_session, sample_conversation):
     """Test saving and retrieving canonical representation."""
     from catsyphon.canonicalization.models import CanonicalConversation
 
@@ -54,7 +52,7 @@ async def test_save_and_get_canonical(test_session, sample_conversation):
     )
 
     # Save
-    saved = await repo.save_canonical(
+    saved = repo.save_canonical(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
         canonical=canonical,
@@ -68,7 +66,7 @@ async def test_save_and_get_canonical(test_session, sample_conversation):
     assert saved.version == CANONICAL_VERSION
 
     # Retrieve
-    cached = await repo.get_cached(
+    cached = repo.get_cached(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
     )
@@ -78,8 +76,7 @@ async def test_save_and_get_canonical(test_session, sample_conversation):
     assert cached.narrative == "Test narrative for tagging"
 
 
-@pytest.mark.asyncio
-async def test_should_regenerate_version_mismatch(test_session, sample_conversation):
+def test_should_regenerate_version_mismatch(test_session, sample_conversation):
     """Test should_regenerate returns True on version mismatch."""
     from catsyphon.canonicalization.models import CanonicalConversation
 
@@ -105,7 +102,7 @@ async def test_should_regenerate_version_mismatch(test_session, sample_conversat
         generated_at=datetime.now(),
     )
 
-    saved = await repo.save_canonical(
+    saved = repo.save_canonical(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
         canonical=canonical,
@@ -113,7 +110,7 @@ async def test_should_regenerate_version_mismatch(test_session, sample_conversat
 
     # Manually change version to simulate old cache
     saved.version = CANONICAL_VERSION - 1
-    await test_session.flush()
+    test_session.flush()
 
     # Check should_regenerate
     should_regen = repo.should_regenerate(
@@ -125,8 +122,7 @@ async def test_should_regenerate_version_mismatch(test_session, sample_conversat
     assert should_regen is True
 
 
-@pytest.mark.asyncio
-async def test_should_regenerate_token_growth(test_session, sample_conversation):
+def test_should_regenerate_token_growth(test_session, sample_conversation):
     """Test should_regenerate returns True when token growth exceeds threshold."""
     from catsyphon.canonicalization.models import CanonicalConversation
 
@@ -152,7 +148,7 @@ async def test_should_regenerate_token_growth(test_session, sample_conversation)
         generated_at=datetime.now(),
     )
 
-    saved = await repo.save_canonical(
+    saved = repo.save_canonical(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
         canonical=canonical,
@@ -172,8 +168,7 @@ async def test_should_regenerate_token_growth(test_session, sample_conversation)
     assert should_regen is True
 
 
-@pytest.mark.asyncio
-async def test_should_not_regenerate_when_fresh(test_session, sample_conversation):
+def test_should_not_regenerate_when_fresh(test_session, sample_conversation):
     """Test should_regenerate returns False when cache is fresh."""
     from catsyphon.canonicalization.models import CanonicalConversation
 
@@ -199,7 +194,7 @@ async def test_should_not_regenerate_when_fresh(test_session, sample_conversatio
         generated_at=datetime.now(),
     )
 
-    saved = await repo.save_canonical(
+    saved = repo.save_canonical(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
         canonical=canonical,
@@ -217,8 +212,7 @@ async def test_should_not_regenerate_when_fresh(test_session, sample_conversatio
     assert should_regen is False
 
 
-@pytest.mark.asyncio
-async def test_invalidate_by_conversation(test_session, sample_conversation):
+def test_invalidate_by_conversation(test_session, sample_conversation):
     """Test invalidate deletes canonical for specific conversation."""
     from catsyphon.canonicalization.models import CanonicalConversation
 
@@ -244,25 +238,25 @@ async def test_invalidate_by_conversation(test_session, sample_conversation):
         generated_at=datetime.now(),
     )
 
-    await repo.save_canonical(
+    repo.save_canonical(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
         canonical=canonical,
     )
 
     # Verify it exists
-    cached = await repo.get_cached(
+    cached = repo.get_cached(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
     )
     assert cached is not None
 
     # Invalidate
-    count = await repo.invalidate(conversation_id=sample_conversation.id)
+    count = repo.invalidate(conversation_id=sample_conversation.id)
     assert count == 1
 
     # Verify it's gone
-    cached = await repo.get_cached(
+    cached = repo.get_cached(
         conversation_id=sample_conversation.id,
         canonical_type="tagging",
     )
