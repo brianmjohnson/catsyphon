@@ -4,6 +4,7 @@ Shared failure tracking utilities for ingestion pipeline.
 Centralizes the logic for persisting ingestion/parser failures to the database.
 """
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -11,9 +12,8 @@ from uuid import UUID
 
 from catsyphon.db.connection import db_session
 from catsyphon.db.repositories import IngestionJobRepository
-from catsyphon.logging_config import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def track_failure(
