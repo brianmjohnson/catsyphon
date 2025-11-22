@@ -320,7 +320,7 @@ class UploadResult(BaseModel):
     """Result for a single uploaded file."""
 
     filename: str
-    status: str  # "success", "duplicate", or "error"
+    status: str  # "success", "duplicate", "skipped", or "error"
     conversation_id: Optional[UUID] = None
     message_count: int = 0
     epoch_count: int = 0
@@ -560,6 +560,10 @@ class RegenerateCanonicalRequest(BaseModel):
     canonical_type: str = Field(
         default="tagging",
         description="Type of canonical to regenerate (tagging, insights, export)"
+    )
+    sampling_strategy: str = Field(
+        default="semantic",
+        description="Sampling strategy (semantic, epoch, chronological)"
     )
 
 
