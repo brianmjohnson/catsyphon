@@ -887,7 +887,7 @@ function LiveActivityTab() {
         </div>
       </div>
 
-      {/* Stats Grid */}
+      {/* Stats Grid - Top Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Watch Status Card */}
         <div className="p-6 bg-card border border-border rounded-lg">
@@ -953,39 +953,134 @@ function LiveActivityTab() {
           )}
         </div>
 
-        {/* Performance Card */}
+        {/* Incremental Parsing Card */}
         <div className="p-6 bg-card border border-border rounded-lg">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-purple-500/10 rounded-lg">
               <Zap className="h-5 w-5 text-purple-600" />
             </div>
-            <h3 className="font-semibold">Performance</h3>
+            <h3 className="font-semibold">Incremental Parsing</h3>
           </div>
           {stats ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Avg Time</span>
+                <span className="text-sm text-muted-foreground">Usage Rate</span>
+                <span className="text-2xl font-bold text-purple-600">
+                  {stats.incremental_percentage
+                    ? `${stats.incremental_percentage.toFixed(1)}%`
+                    : '0%'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Incremental Jobs</span>
+                <span className="font-semibold">{stats.incremental_jobs}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Full Parse Jobs</span>
+                <span className="font-semibold">{stats.total_jobs - stats.incremental_jobs}</span>
+              </div>
+            </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
+        </div>
+      </div>
+
+      {/* Pipeline Performance Grid - Bottom Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Pipeline Performance Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-blue-500/10 rounded-lg">
+              <Clock className="h-5 w-5 text-blue-600" />
+            </div>
+            <h3 className="font-semibold">Pipeline Performance</h3>
+          </div>
+          {stats ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Total Avg</span>
                 <span className="text-2xl font-bold">
                   {stats.avg_processing_time_ms
                     ? `${stats.avg_processing_time_ms.toFixed(0)}ms`
                     : 'N/A'}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Incremental</span>
-                <span className="text-lg font-semibold text-purple-600">
-                  {stats.incremental_percentage
-                    ? `${stats.incremental_percentage.toFixed(1)}%`
-                    : '0%'}
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Deduplication</span>
+                <span className="font-semibold">
+                  {stats.avg_deduplication_check_ms
+                    ? `${stats.avg_deduplication_check_ms.toFixed(0)}ms`
+                    : 'N/A'}
                 </span>
               </div>
-              <div className="text-xs text-muted-foreground mt-2">
-                {stats.incremental_jobs} of {stats.total_jobs} jobs used incremental parsing
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Database Ops</span>
+                <span className="font-semibold">
+                  {stats.avg_database_operations_ms
+                    ? `${stats.avg_database_operations_ms.toFixed(0)}ms`
+                    : 'N/A'}
+                </span>
               </div>
             </div>
           ) : (
             <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
           )}
+        </div>
+
+        {/* Error Breakdown Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-red-500/10 rounded-lg">
+              <AlertCircle className="h-5 w-5 text-red-600" />
+            </div>
+            <h3 className="font-semibold">Error Breakdown</h3>
+          </div>
+          {stats ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Total Failed</span>
+                <span className="text-2xl font-bold text-destructive">
+                  {stats.by_status.failed || 0}
+                </span>
+              </div>
+              {Object.keys(stats.error_rates_by_stage || {}).length > 0 ? (
+                Object.entries(stats.error_rates_by_stage).map(([stage, count]) => (
+                  <div key={stage} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground capitalize">{stage}</span>
+                    <span className="font-semibold">{count}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-muted-foreground mt-2">
+                  {stats.by_status.failed === 0
+                    ? 'No errors recorded'
+                    : 'Stage-level error tracking coming soon'}
+                </div>
+              )}
+            </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
+        </div>
+
+        {/* LLM Usage Card (Placeholder) */}
+        <div className="p-6 bg-card border border-border rounded-lg opacity-60">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-orange-500/10 rounded-lg">
+              <Zap className="h-5 w-5 text-orange-600" />
+            </div>
+            <h3 className="font-semibold">LLM Usage</h3>
+          </div>
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Coming Soon</span>
+              <span className="text-2xl font-bold">-</span>
+            </div>
+            <div className="text-xs text-muted-foreground mt-2">
+              Token usage, costs, and cache hit rates will be tracked here
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1182,6 +1277,30 @@ function IngestionJobCard({ job }: IngestionJobCardProps) {
           )}
         </div>
       </div>
+
+      {/* Stage-level metrics (if available) */}
+      {job.metrics && Object.keys(job.metrics).length > 0 && (
+        <div className="mt-2 pt-2 border-t border-border/50">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="font-medium">Pipeline Stages:</span>
+            {job.metrics.deduplication_check_ms !== undefined && (
+              <span>
+                Dedup: {job.metrics.deduplication_check_ms.toFixed(0)}ms
+              </span>
+            )}
+            {job.metrics.database_operations_ms !== undefined && (
+              <span>
+                DB: {job.metrics.database_operations_ms.toFixed(0)}ms
+              </span>
+            )}
+            {job.metrics.total_ms !== undefined && (
+              <span className="font-medium">
+                Total: {job.metrics.total_ms.toFixed(0)}ms
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
