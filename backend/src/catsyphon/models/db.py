@@ -285,6 +285,10 @@ class Developer(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    __table_args__ = (
+        UniqueConstraint('workspace_id', 'username', name='uq_workspace_developer'),
+    )
+
     # Relationships
     workspace: Mapped["Workspace"] = relationship(back_populates="developers")
     conversations: Mapped[list["Conversation"]] = relationship(

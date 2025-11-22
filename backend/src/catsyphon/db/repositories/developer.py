@@ -60,36 +60,50 @@ class DeveloperRepository(BaseRepository[Developer]):
         self, username: str, workspace_id: uuid.UUID, **kwargs
     ) -> Developer:
         """
-        Get existing developer or create new one within a workspace.
+        Get existing developer or create new one within a workspace (race-safe).
 
-        NOTE: This method has a race condition similar to the one fixed in
-        ProjectRepository.get_or_create_by_directory(). However, the Developer
-        model currently lacks a unique constraint on (workspace_id, username),
-        so we cannot use the same ON CONFLICT approach without first adding
-        the constraint via migration.
-
-        TODO: Add unique constraint to developers table:
-            UniqueConstraint('workspace_id', 'username', name='uq_workspace_developer')
-        Then update this method to use ON CONFLICT DO NOTHING.
-
-        Race condition behavior WITHOUT unique constraint:
-        - Multiple concurrent calls can create duplicate developers
-        - No IntegrityError raised (constraint doesn't exist)
-        - Duplicates may exist silently in the database
+        This method uses PostgreSQL's ON CONFLICT DO NOTHING to prevent race conditions
+        when multiple threads/processes attempt to create the same developer simultaneously.
 
         Args:
             username: Developer username
             workspace_id: Workspace UUID
-            **kwargs: Additional developer fields
+            **kwargs: Additional developer fields (e.g., email)
 
         Returns:
             Developer instance
+
+        Raises:
+            RuntimeError: If developer creation/fetch fails unexpectedly
         """
+        # Fast path: try to get existing first
+        developer = self.get_by_username(username, workspace_id)
+        if developer:
+            return developer
+
+        # Use PostgreSQL's INSERT ... ON CONFLICT DO NOTHING for atomic upsert
+        # This prevents IntegrityError when multiple threads race to create same developer
+        stmt = pg_insert(Developer).values(
+            id=uuid.uuid4(),
+            workspace_id=workspace_id,
+            username=username,
+            **kwargs
+        ).on_conflict_do_nothing(
+            index_elements=['workspace_id', 'username']  # uq_workspace_developer constraint
+        )
+
+        self.session.execute(stmt)
+        self.session.flush()
+
+        # Fetch the developer (either newly created or existing from conflict)
         developer = self.get_by_username(username, workspace_id)
         if not developer:
-            developer = self.create(
-                username=username, workspace_id=workspace_id, **kwargs
+            # Extremely rare: another transaction created and deleted it between insert and fetch
+            raise RuntimeError(
+                f"Developer creation/fetch failed for workspace_id={workspace_id}, "
+                f"username={username}"
             )
+
         return developer
 
     def get_or_create_by_username(
