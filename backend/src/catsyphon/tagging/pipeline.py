@@ -58,7 +58,9 @@ class TaggingPipeline:
 
         logger.info(f"TaggingPipeline initialized (cache: {enable_cache})")
 
-    def tag_conversation(self, parsed: ParsedConversation) -> dict[str, Any]:
+    def tag_conversation(
+        self, parsed: ParsedConversation
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Tag a conversation with combined rule-based and LLM tags.
 
         DEPRECATED: Use tag_from_canonical_async for better performance and accuracy.
@@ -68,7 +70,9 @@ class TaggingPipeline:
             parsed: The parsed conversation to tag
 
         Returns:
-            Dictionary of tags suitable for database storage
+            Tuple of (tags_dict, llm_metrics_dict)
+            - tags_dict: Dictionary of tags suitable for database storage
+            - llm_metrics_dict: LLM metrics (tokens, cost, duration, model)
         """
         logger.warning(
             "Using deprecated tag_conversation method. "
@@ -80,12 +84,23 @@ class TaggingPipeline:
             cached_tags = self.cache.get(parsed)
             if cached_tags:
                 logger.info("Using cached tags")
-                return cached_tags.to_dict()
+                # Cache hit - no LLM API call made
+                cache_metrics = {
+                    "llm_tagging_ms": 0,
+                    "llm_prompt_tokens": 0,
+                    "llm_completion_tokens": 0,
+                    "llm_total_tokens": 0,
+                    "llm_cost_usd": 0.0,
+                    "llm_model": "cached",
+                    "llm_finish_reason": "cached",
+                    "llm_cache_hit": True,
+                }
+                return cached_tags.to_dict(), cache_metrics
 
         # Run taggers
         logger.info("Running taggers (cache miss)")
         rule_tags = self.rule_tagger.tag_conversation(parsed)
-        llm_tags = self.llm_tagger.tag_conversation(parsed)
+        llm_tags, llm_metrics = self.llm_tagger.tag_conversation(parsed)
 
         # Merge tags (rule-based takes precedence for deterministic fields)
         merged_tags = self._merge_tags(rule_tags, llm_tags)
@@ -94,14 +109,14 @@ class TaggingPipeline:
         if self.enable_cache:
             self.cache.set(parsed, merged_tags)
 
-        return merged_tags.to_dict()
+        return merged_tags.to_dict(), llm_metrics
 
     def tag_from_canonical(
         self,
         conversation,
         session: Session,
         children: Optional[list] = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Tag a conversation using canonical representation.
 
         This is the preferred method as it:
@@ -116,7 +131,9 @@ class TaggingPipeline:
             children: Optional list of child conversations to include
 
         Returns:
-            Dictionary of tags suitable for database storage
+            Tuple of (tags_dict, llm_metrics_dict)
+            - tags_dict: Dictionary of tags suitable for database storage
+            - llm_metrics_dict: LLM metrics (tokens, cost, duration, model)
         """
         # Check cache first (using conversation ID as key)
         # Note: We could enhance cache to use canonical hash, but for now
@@ -141,14 +158,21 @@ class TaggingPipeline:
 
         logger.info(
             f"Using canonical representation: "
-            f"{canonical.token_count} tokens, version {canonical.version}"
+            f"{canonical.token_count} tokens, version {canonical.canonical_version}"
         )
+
+        # Build metadata dict from canonical fields
+        metadata = {
+            "tools_used": canonical.tools_used,
+            "files_touched": canonical.files_touched,
+            "has_errors": canonical.has_errors,
+        }
 
         # Run taggers with canonical data
         rule_tags = self.rule_tagger.tag_from_canonical(canonical)
-        llm_tags = self.llm_tagger.tag_from_canonical(
+        llm_tags, llm_metrics = self.llm_tagger.tag_from_canonical(
             narrative=canonical.narrative,
-            metadata=canonical.canonical_metadata,
+            metadata=metadata,
         )
 
         # Merge tags (rule-based takes precedence for deterministic fields)
@@ -157,7 +181,7 @@ class TaggingPipeline:
         # Note: Tag cache could be updated here if needed
         # For now, canonical caching provides the primary benefit
 
-        return merged_tags.to_dict()
+        return merged_tags.to_dict(), llm_metrics
 
     def _merge_tags(
         self, rule_tags: ConversationTags, llm_tags: ConversationTags

@@ -121,14 +121,18 @@ class LLMTagger:
         self.model = model
         self.max_tokens = max_tokens
 
-    def tag_conversation(self, parsed: ParsedConversation) -> ConversationTags:
+    def tag_conversation(
+        self, parsed: ParsedConversation
+    ) -> tuple[ConversationTags, dict[str, Any]]:
         """Tag a conversation using OpenAI LLM.
 
         Args:
             parsed: The parsed conversation to analyze
 
         Returns:
-            ConversationTags with LLM-extracted metadata
+            Tuple of (ConversationTags, llm_metrics)
+            - ConversationTags: LLM-extracted metadata
+            - llm_metrics: Dict with duration_ms, tokens, cost, model, cache_hit
         """
         request_id = ""
         try:
@@ -168,14 +172,35 @@ class LLMTagger:
                 duration_ms=duration_ms,
             )
 
+            # Extract LLM metrics from response
+            usage = response.usage
+            prompt_tokens = usage.prompt_tokens if usage else 0
+            completion_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            # Calculate cost (gpt-4o-mini pricing as of late 2024)
+            # Input: $0.15 per 1M tokens, Output: $0.60 per 1M tokens
+            cost_usd = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
+
+            llm_metrics = {
+                "llm_tagging_ms": duration_ms,
+                "llm_prompt_tokens": prompt_tokens,
+                "llm_completion_tokens": completion_tokens,
+                "llm_total_tokens": total_tokens,
+                "llm_cost_usd": cost_usd,
+                "llm_model": response.model,
+                "llm_finish_reason": response.choices[0].finish_reason,
+                "llm_cache_hit": False,  # Not a cache hit (API call made)
+            }
+
             # Parse response
             content = response.choices[0].message.content
             if not content:
                 logger.warning("Empty response from OpenAI")
-                return self._fallback_tags()
+                return self._fallback_tags(), llm_metrics
 
             tags_dict = json.loads(content)
-            return self._parse_tags(tags_dict)
+            return self._parse_tags(tags_dict), llm_metrics
 
         except Exception as e:
             logger.error(f"LLM tagging failed: {e}")
@@ -185,13 +210,25 @@ class LLMTagger:
                 error=e,
                 conversation=parsed,
             )
-            return self._fallback_tags()
+            # Return fallback tags with error metrics
+            error_metrics = {
+                "llm_tagging_ms": 0,
+                "llm_prompt_tokens": 0,
+                "llm_completion_tokens": 0,
+                "llm_total_tokens": 0,
+                "llm_cost_usd": 0.0,
+                "llm_model": self.model,
+                "llm_finish_reason": "error",
+                "llm_cache_hit": False,
+                "llm_error": str(e),
+            }
+            return self._fallback_tags(), error_metrics
 
     def tag_from_canonical(
         self,
         narrative: str,
-        metadata: Optional[dict] = None,
-    ) -> ConversationTags:
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> tuple[ConversationTags, dict[str, Any]]:
         """Tag a conversation using canonical narrative form.
 
         This is the preferred method as it uses intelligently sampled content
@@ -202,7 +239,9 @@ class LLMTagger:
             metadata: Optional metadata from canonical (for context)
 
         Returns:
-            ConversationTags with LLM-extracted metadata
+            Tuple of (ConversationTags, llm_metrics)
+            - ConversationTags: LLM-extracted metadata
+            - llm_metrics: Dict with duration_ms, tokens, cost, model, cache_hit
         """
         request_id = ""
         try:
@@ -232,23 +271,54 @@ class LLMTagger:
 
             logger.info(f"LLM tagging from canonical completed in {duration_ms:.0f}ms")
 
+            # Extract LLM metrics from response
+            usage = response.usage
+            prompt_tokens = usage.prompt_tokens if usage else 0
+            completion_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            # Calculate cost (gpt-4o-mini pricing)
+            cost_usd = (prompt_tokens * 0.00000015) + (completion_tokens * 0.0000006)
+
+            llm_metrics = {
+                "llm_tagging_ms": duration_ms,
+                "llm_prompt_tokens": prompt_tokens,
+                "llm_completion_tokens": completion_tokens,
+                "llm_total_tokens": total_tokens,
+                "llm_cost_usd": cost_usd,
+                "llm_model": response.model,
+                "llm_finish_reason": response.choices[0].finish_reason,
+                "llm_cache_hit": False,
+            }
+
             # Parse response
             content = response.choices[0].message.content
             if not content:
                 logger.warning("Empty response from OpenAI")
-                return self._fallback_tags()
+                return self._fallback_tags(), llm_metrics
 
             tags_dict = json.loads(content)
-            return self._parse_tags(tags_dict)
+            return self._parse_tags(tags_dict), llm_metrics
 
         except Exception as e:
             logger.error(f"LLM tagging from canonical failed: {e}")
-            return self._fallback_tags()
+            error_metrics = {
+                "llm_tagging_ms": 0,
+                "llm_prompt_tokens": 0,
+                "llm_completion_tokens": 0,
+                "llm_total_tokens": 0,
+                "llm_cost_usd": 0.0,
+                "llm_model": self.model,
+                "llm_finish_reason": "error",
+                "llm_cache_hit": False,
+                "llm_error": str(e),
+            }
+            return self._fallback_tags(), error_metrics
 
     def _build_canonical_prompt(
         self,
         narrative: str,
-        metadata: Optional[dict] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> str:
         """Build tagging prompt from canonical narrative.
 

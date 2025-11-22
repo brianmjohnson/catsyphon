@@ -71,6 +71,12 @@ class TestLLMTagger:
         """Test successful tagging with OpenAI."""
         # Mock OpenAI response
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(
+            prompt_tokens=150,
+            completion_tokens=50,
+            total_tokens=200
+        )
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -82,7 +88,8 @@ class TestLLMTagger:
                         "features": ["authentication", "OAuth"],
                         "problems": []
                     }"""
-                )
+                ),
+                finish_reason="stop"
             )
         ]
 
@@ -91,13 +98,23 @@ class TestLLMTagger:
         llm_tagger.client = mock_client
 
         # Tag conversation
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, metrics = llm_tagger.tag_conversation(sample_conversation)
 
-        # Verify results
+        # Verify tag results
         assert tags.intent == "feature_add"
         assert tags.outcome == "success"
         assert tags.sentiment == "positive"
         assert tags.sentiment_score == 0.8
+
+        # Verify metrics
+        assert metrics["llm_prompt_tokens"] == 150
+        assert metrics["llm_completion_tokens"] == 50
+        assert metrics["llm_total_tokens"] == 200
+        assert metrics["llm_model"] == "gpt-4o-mini"
+        assert metrics["llm_finish_reason"] == "stop"
+        assert metrics["llm_cache_hit"] == False
+        assert "llm_tagging_ms" in metrics
+        assert "llm_cost_usd" in metrics
         assert "authentication" in tags.features
         assert "OAuth" in tags.features
         assert tags.problems == []
@@ -120,6 +137,8 @@ class TestLLMTagger:
         """Test tagging with invalid intent value."""
         # Mock OpenAI response with invalid intent
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -139,7 +158,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Should default to "other" for invalid intent
         assert tags.intent == "other"
@@ -153,6 +172,8 @@ class TestLLMTagger:
     ):
         """Test tagging with invalid outcome value."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -172,7 +193,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Should default to "unknown" for invalid outcome
         assert tags.outcome == "unknown"
@@ -186,6 +207,8 @@ class TestLLMTagger:
     ):
         """Test tagging with invalid sentiment value."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -205,7 +228,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Should default to "neutral" for invalid sentiment
         assert tags.sentiment == "neutral"
@@ -220,6 +243,8 @@ class TestLLMTagger:
         """Test that sentiment score is clamped to -1.0 to 1.0 range."""
         # Mock response with out-of-range sentiment score
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -239,7 +264,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Score should be clamped to -1.0
         assert tags.sentiment_score == -1.0
@@ -253,6 +278,8 @@ class TestLLMTagger:
     ):
         """Test that features list is truncated to max 5 items."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -272,7 +299,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Features should be truncated to 5
         assert len(tags.features) == 5
@@ -286,6 +313,8 @@ class TestLLMTagger:
     ):
         """Test that problems list is truncated to max 5 items."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [
             Mock(
                 message=Mock(
@@ -305,7 +334,7 @@ class TestLLMTagger:
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Problems should be truncated to 5
         assert len(tags.problems) == 5
@@ -323,7 +352,7 @@ class TestLLMTagger:
         llm_tagger.client = mock_client
 
         # Should return fallback tags instead of crashing
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         assert tags.intent == "other"
         assert tags.outcome == "unknown"
@@ -339,13 +368,15 @@ class TestLLMTagger:
     ):
         """Test fallback behavior when OpenAI returns empty response."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [Mock(message=Mock(content=None))]
 
         mock_client = Mock()
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Should return fallback tags
         assert tags.intent == "other"
@@ -361,13 +392,15 @@ class TestLLMTagger:
     ):
         """Test fallback behavior when OpenAI returns invalid JSON."""
         mock_response = Mock()
+        mock_response.model = "gpt-4o-mini"
+        mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         mock_response.choices = [Mock(message=Mock(content="invalid json {{{"))]
 
         mock_client = Mock()
         mock_client.chat.completions.create.return_value = mock_response
         llm_tagger.client = mock_client
 
-        tags = llm_tagger.tag_conversation(sample_conversation)
+        tags, _ = llm_tagger.tag_conversation(sample_conversation)
 
         # Should return fallback tags
         assert tags.intent == "other"
@@ -449,6 +482,8 @@ class TestLLMTagger:
 
         for intent in valid_intents:
             mock_response = Mock()
+            mock_response.model = "gpt-4o-mini"
+            mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
             mock_response.choices = [
                 Mock(
                     message=Mock(
@@ -468,7 +503,7 @@ class TestLLMTagger:
             mock_client.chat.completions.create.return_value = mock_response
             llm_tagger.client = mock_client
 
-            tags = llm_tagger.tag_conversation(sample_conversation)
+            tags, _ = llm_tagger.tag_conversation(sample_conversation)
             assert tags.intent == intent
 
     @patch("catsyphon.tagging.llm_tagger.OpenAI")
@@ -483,6 +518,8 @@ class TestLLMTagger:
 
         for outcome in valid_outcomes:
             mock_response = Mock()
+            mock_response.model = "gpt-4o-mini"
+            mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
             mock_response.choices = [
                 Mock(
                     message=Mock(
@@ -502,7 +539,7 @@ class TestLLMTagger:
             mock_client.chat.completions.create.return_value = mock_response
             llm_tagger.client = mock_client
 
-            tags = llm_tagger.tag_conversation(sample_conversation)
+            tags, _ = llm_tagger.tag_conversation(sample_conversation)
             assert tags.outcome == outcome
 
     @patch("catsyphon.tagging.llm_tagger.OpenAI")
@@ -517,6 +554,8 @@ class TestLLMTagger:
 
         for sentiment in valid_sentiments:
             mock_response = Mock()
+            mock_response.model = "gpt-4o-mini"
+            mock_response.usage = Mock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
             mock_response.choices = [
                 Mock(
                     message=Mock(
@@ -536,5 +575,5 @@ class TestLLMTagger:
             mock_client.chat.completions.create.return_value = mock_response
             llm_tagger.client = mock_client
 
-            tags = llm_tagger.tag_conversation(sample_conversation)
+            tags, _ = llm_tagger.tag_conversation(sample_conversation)
             assert tags.sentiment == sentiment

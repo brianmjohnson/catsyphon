@@ -284,6 +284,14 @@ export interface IngestionStatsResponse {
   avg_parse_duration_ms: number | null;
   avg_deduplication_check_ms: number | null;
   avg_database_operations_ms: number | null;
+  avg_tagging_duration_ms: number | null;
+  avg_llm_tagging_ms: number | null;
+  avg_llm_prompt_tokens: number | null;
+  avg_llm_completion_tokens: number | null;
+  avg_llm_total_tokens: number | null;
+  avg_llm_cost_usd: number | null;
+  total_llm_cost_usd: number | null;
+  llm_cache_hit_rate: number | null;
   error_rates_by_stage: Record<string, number>;
 }
 

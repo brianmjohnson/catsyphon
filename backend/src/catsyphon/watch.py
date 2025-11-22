@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from catsyphon.tagging.pipeline import TaggingPipeline
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
+from sqlalchemy.exc import OperationalError
+from psycopg2.errors import DeadlockDetected
 
 from catsyphon.logging_config import setup_logging
 
@@ -50,6 +52,35 @@ from catsyphon.pipeline.ingestion import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def retry_on_deadlock(max_retries: int = 3, delay_ms: int = 100):
+    """Decorator to retry database operations on deadlock errors.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay_ms: Delay between retries in milliseconds
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except OperationalError as e:
+                    # Check if it's a deadlock error
+                    if "deadlock" in str(e).lower() and attempt < max_retries - 1:
+                        logger.warning(
+                            f"Deadlock detected on attempt {attempt + 1}/{max_retries}, "
+                            f"retrying in {delay_ms}ms..."
+                        )
+                        time.sleep(delay_ms / 1000.0)
+                        continue
+                    # If not a deadlock or out of retries, re-raise
+                    raise
+            # This should never be reached due to raise above, but for type safety:
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -381,11 +412,15 @@ class FileWatcher(FileSystemEventHandler):
 
                     # Run tagging if enabled
                     tags = None
+                    llm_metrics = None
+                    tagging_duration_ms = None
                     if self.tagging_pipeline:
                         try:
-                            tags = self.tagging_pipeline.tag_conversation(parsed)
+                            tagging_start_ms = time.time() * 1000
+                            tags, llm_metrics = self.tagging_pipeline.tag_conversation(parsed)
+                            tagging_duration_ms = (time.time() * 1000) - tagging_start_ms
                             logger.debug(
-                                f"Tagged {file_path.name}: "
+                                f"Tagged {file_path.name} in {tagging_duration_ms:.0f}ms: "
                                 f"intent={tags.get('intent')}, "
                                 f"outcome={tags.get('outcome')}, "
                                 f"sentiment={tags.get('sentiment')}"
@@ -395,12 +430,21 @@ class FileWatcher(FileSystemEventHandler):
                                 f"Tagging failed for {file_path.name}: {tag_error}"
                             )
                             tags = None  # Continue without tags
+                            llm_metrics = None
+                            tagging_duration_ms = None
 
                     # Determine update mode
                     # - If raw_log exists: use "replace" to update existing tracking
                     # - If no raw_log: use "replace" to create raw_log (don't skip!)
                     # This ensures files are always ingested, even on fresh DB
                     update_mode = "replace"
+
+                    # Merge LLM metrics and tagging duration into parse metrics
+                    combined_metrics = parse_metrics.copy()
+                    if llm_metrics:
+                        combined_metrics.update(llm_metrics)
+                    if tagging_duration_ms is not None:
+                        combined_metrics["tagging_duration_ms"] = tagging_duration_ms
 
                     # Ingest into database
                     conversation = ingest_conversation(
@@ -415,7 +459,7 @@ class FileWatcher(FileSystemEventHandler):
                         source_type="watch",
                         source_config_id=self.config_id,
                         created_by=None,  # System-triggered
-                        parse_metrics=parse_metrics,
+                        parse_metrics=combined_metrics,
                     )
 
                     logger.info(

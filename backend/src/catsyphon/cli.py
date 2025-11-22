@@ -188,18 +188,32 @@ def ingest(
 
             # Run tagging if enabled
             tags = None
+            llm_metrics = None
+            tagging_duration_ms = None
             if tagging_pipeline:
                 console.print("  [cyan]Tagging...[/cyan] ", end="")
                 try:
-                    tags = tagging_pipeline.tag_conversation(conversation)
+                    tagging_start_ms = time.time() * 1000
+                    tags, llm_metrics = tagging_pipeline.tag_conversation(conversation)
+                    tagging_duration_ms = (time.time() * 1000) - tagging_start_ms
                     console.print(
-                        f"[green]✓[/green] intent={tags.get('intent')}, "
+                        f"[green]✓[/green] ({tagging_duration_ms:.0f}ms) "
+                        f"intent={tags.get('intent')}, "
                         f"outcome={tags.get('outcome')}, "
                         f"sentiment={tags.get('sentiment')}"
                     )
                 except Exception as tag_error:
                     console.print(f"[yellow]⚠ Tagging failed:[/yellow] {tag_error}")
                     tags = None  # Continue without tags
+                    llm_metrics = None
+                    tagging_duration_ms = None
+
+            # Merge LLM metrics and tagging duration into parse metrics
+            combined_metrics = parse_metrics.copy()
+            if llm_metrics:
+                combined_metrics.update(llm_metrics)
+            if tagging_duration_ms is not None:
+                combined_metrics["tagging_duration_ms"] = tagging_duration_ms
 
             # Store to database (unless dry-run)
             if not dry_run:
@@ -218,7 +232,7 @@ def ingest(
                             tags=tags,
                             skip_duplicates=skip_duplicates,
                             update_mode=update_mode,
-                            parse_metrics=parse_metrics,
+                            parse_metrics=combined_metrics,
                         )
                         session.commit()
                         console.print(

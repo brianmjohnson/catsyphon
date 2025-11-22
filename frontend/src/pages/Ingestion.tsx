@@ -1030,6 +1030,14 @@ function LiveActivityTab() {
                     : 'N/A'}
                 </span>
               </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Tagging</span>
+                <span className="font-semibold">
+                  {stats.avg_tagging_duration_ms
+                    ? `${stats.avg_tagging_duration_ms.toFixed(0)}ms`
+                    : 'N/A'}
+                </span>
+              </div>
             </div>
           ) : (
             <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
@@ -1072,23 +1080,62 @@ function LiveActivityTab() {
           )}
         </div>
 
-        {/* LLM Usage Card (Placeholder) */}
-        <div className="p-6 bg-card border border-border rounded-lg opacity-60">
+        {/* LLM Usage Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-orange-500/10 rounded-lg">
               <Zap className="h-5 w-5 text-orange-600" />
             </div>
             <h3 className="font-semibold">LLM Usage</h3>
           </div>
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Coming Soon</span>
-              <span className="text-2xl font-bold">-</span>
+          {stats ? (
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Total Cost</span>
+                <span className="text-2xl font-bold">
+                  {stats.total_llm_cost_usd
+                    ? `$${stats.total_llm_cost_usd.toFixed(4)}`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="space-y-2 pt-2 border-t border-border/50">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Avg Cost/Job</span>
+                  <span className="font-semibold">
+                    {stats.avg_llm_cost_usd
+                      ? `$${stats.avg_llm_cost_usd.toFixed(5)}`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Avg Tokens</span>
+                  <span className="font-semibold">
+                    {stats.avg_llm_total_tokens
+                      ? Math.round(stats.avg_llm_total_tokens)
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Cache Hit Rate</span>
+                  <span className="font-semibold">
+                    {stats.llm_cache_hit_rate !== null && stats.llm_cache_hit_rate !== undefined
+                      ? `${(stats.llm_cache_hit_rate * 100).toFixed(1)}%`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Avg Duration</span>
+                  <span className="font-semibold">
+                    {stats.avg_llm_tagging_ms
+                      ? `${stats.avg_llm_tagging_ms.toFixed(0)}ms`
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              Token usage, costs, and cache hit rates will be tracked here
-            </div>
-          </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
         </div>
       </div>
 

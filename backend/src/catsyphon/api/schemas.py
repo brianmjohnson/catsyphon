@@ -433,6 +433,41 @@ class IngestionStatsResponse(BaseModel):
         default=None,
         description="Average database operations time (inserts, updates, queries)",
     )
+
+    # Tagging aggregate metrics
+    avg_tagging_duration_ms: Optional[float] = Field(
+        default=None,
+        description="Average total tagging duration (rule-based + LLM + merging)",
+    )
+    avg_llm_tagging_ms: Optional[float] = Field(
+        default=None,
+        description="Average LLM tagging duration (OpenAI API call time only)",
+    )
+    avg_llm_prompt_tokens: Optional[float] = Field(
+        default=None,
+        description="Average LLM prompt tokens per tagging operation",
+    )
+    avg_llm_completion_tokens: Optional[float] = Field(
+        default=None,
+        description="Average LLM completion tokens per tagging operation",
+    )
+    avg_llm_total_tokens: Optional[float] = Field(
+        default=None,
+        description="Average total LLM tokens per tagging operation",
+    )
+    avg_llm_cost_usd: Optional[float] = Field(
+        default=None,
+        description="Average LLM cost per tagging operation (USD)",
+    )
+    total_llm_cost_usd: Optional[float] = Field(
+        default=None,
+        description="Total LLM cost across all tagged jobs (USD)",
+    )
+    llm_cache_hit_rate: Optional[float] = Field(
+        default=None,
+        description="Percentage of LLM cache hits (0.0 to 1.0)",
+    )
+
     error_rates_by_stage: dict[str, int] = Field(
         default_factory=dict,
         description="Count of errors by stage (if tracked in future)",

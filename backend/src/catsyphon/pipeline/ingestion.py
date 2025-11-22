@@ -266,10 +266,16 @@ def ingest_conversation(
 
     # Initialize stage metrics tracker
     metrics = StageMetrics()
+    metadata_fields: dict[str, Any] = {}  # Non-numeric metadata fields
 
     # Merge parse metrics if provided by caller
     if parse_metrics:
-        metrics.stages.update(parse_metrics)
+        for key, value in parse_metrics.items():
+            if isinstance(value, (int, float)):
+                metrics.stages[key] = float(value)
+            else:
+                # Store non-numeric metadata separately
+                metadata_fields[key] = value
 
     # Initialize ingestion job repository
     ingestion_repo = IngestionJobRepository(session)
@@ -391,7 +397,7 @@ def ingest_conversation(
                     ingestion_job.status = "skipped"
                     ingestion_job.conversation_id = existing_conversation.id
                     ingestion_job.processing_time_ms = elapsed_ms
-                    ingestion_job.metrics = metrics.to_dict()  # Store metrics
+                    ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
                     ingestion_job.completed_at = datetime.utcnow()
                     session.flush()
                     logger.debug(
@@ -498,7 +504,7 @@ def ingest_conversation(
                         ingestion_job.processing_time_ms = elapsed_ms
                         ingestion_job.messages_added = messages_added
                         ingestion_job.incremental = True  # Incremental append
-                        ingestion_job.metrics = metrics.to_dict()  # Store metrics
+                        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
                         ingestion_job.completed_at = datetime.utcnow()
                         session.flush()
                         logger.debug(
@@ -796,7 +802,7 @@ def ingest_conversation(
         ingestion_job.processing_time_ms = elapsed_ms
         ingestion_job.messages_added = len(messages)
         ingestion_job.incremental = False  # Full parse (not incremental)
-        ingestion_job.metrics = metrics.to_dict()  # Store stage-level metrics
+        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
         ingestion_job.completed_at = datetime.utcnow()
         session.flush()
         logger.debug(
@@ -823,7 +829,7 @@ def ingest_conversation(
         ingestion_job.status = "failed"
         ingestion_job.error_message = f"{type(e).__name__}: {str(e)}"
         ingestion_job.processing_time_ms = elapsed_ms
-        ingestion_job.metrics = metrics.to_dict()  # Store partial metrics
+        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store partial metrics
         ingestion_job.completed_at = datetime.utcnow()
         session.flush()
         logger.error(f"Ingestion failed: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -1115,10 +1121,16 @@ def ingest_messages_incremental(
 
     # Initialize stage metrics tracker
     metrics = StageMetrics()
+    metadata_fields: dict[str, Any] = {}  # Non-numeric metadata fields
 
     # Merge parse metrics if provided by caller
     if parse_metrics:
-        metrics.stages.update(parse_metrics)
+        for key, value in parse_metrics.items():
+            if isinstance(value, (int, float)):
+                metrics.stages[key] = float(value)
+            else:
+                # Store non-numeric metadata separately
+                metadata_fields[key] = value
 
     # Initialize ingestion job repository
     ingestion_repo = IngestionJobRepository(session)
@@ -1282,7 +1294,7 @@ def ingest_messages_incremental(
     ingestion_job.processing_time_ms = elapsed_ms
     ingestion_job.messages_added = len(incremental_result.new_messages)
     ingestion_job.completed_at = datetime.utcnow()
-    ingestion_job.metrics = metrics.to_dict()
+    ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}
     session.flush()
     logger.debug(
         f"Updated ingestion job to success: {ingestion_job.id}, "

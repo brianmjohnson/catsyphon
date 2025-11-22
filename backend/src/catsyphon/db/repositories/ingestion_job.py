@@ -259,6 +259,14 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
         dedup_times = []
         db_times = []
         parse_times = []
+        tagging_times = []
+        llm_tagging_times = []
+        llm_prompt_tokens = []
+        llm_completion_tokens = []
+        llm_total_tokens = []
+        llm_costs = []
+        llm_cache_hits = 0
+        llm_total_calls = 0
 
         for job in jobs_with_metrics:
             if job.metrics:
@@ -268,10 +276,57 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
                     db_times.append(job.metrics["database_operations_ms"])
                 if "parse_duration_ms" in job.metrics:
                     parse_times.append(job.metrics["parse_duration_ms"])
+                if "tagging_duration_ms" in job.metrics:
+                    tagging_times.append(job.metrics["tagging_duration_ms"])
+
+                # LLM metrics (only present if tagging was enabled)
+                if "llm_tagging_ms" in job.metrics:
+                    llm_total_calls += 1
+                    if job.metrics.get("llm_cache_hit", False):
+                        llm_cache_hits += 1
+                    else:
+                        # Only count non-cache hits for averages (cache hits are 0)
+                        llm_tagging_times.append(job.metrics["llm_tagging_ms"])
+                        if "llm_prompt_tokens" in job.metrics:
+                            llm_prompt_tokens.append(job.metrics["llm_prompt_tokens"])
+                        if "llm_completion_tokens" in job.metrics:
+                            llm_completion_tokens.append(
+                                job.metrics["llm_completion_tokens"]
+                            )
+                        if "llm_total_tokens" in job.metrics:
+                            llm_total_tokens.append(job.metrics["llm_total_tokens"])
+                        if "llm_cost_usd" in job.metrics:
+                            llm_costs.append(job.metrics["llm_cost_usd"])
 
         avg_dedup = sum(dedup_times) / len(dedup_times) if dedup_times else None
         avg_db = sum(db_times) / len(db_times) if db_times else None
         avg_parse = sum(parse_times) / len(parse_times) if parse_times else None
+        avg_tagging = sum(tagging_times) / len(tagging_times) if tagging_times else None
+
+        # LLM aggregates
+        avg_llm_tagging = (
+            sum(llm_tagging_times) / len(llm_tagging_times)
+            if llm_tagging_times
+            else None
+        )
+        avg_llm_prompt = (
+            sum(llm_prompt_tokens) / len(llm_prompt_tokens)
+            if llm_prompt_tokens
+            else None
+        )
+        avg_llm_completion = (
+            sum(llm_completion_tokens) / len(llm_completion_tokens)
+            if llm_completion_tokens
+            else None
+        )
+        avg_llm_total = (
+            sum(llm_total_tokens) / len(llm_total_tokens) if llm_total_tokens else None
+        )
+        avg_llm_cost = sum(llm_costs) / len(llm_costs) if llm_costs else None
+        total_llm_cost = sum(llm_costs) if llm_costs else None
+        llm_cache_rate = (
+            llm_cache_hits / llm_total_calls if llm_total_calls > 0 else None
+        )
 
         return {
             "total_jobs": total,
@@ -286,6 +341,15 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             "avg_parse_duration_ms": avg_parse,
             "avg_deduplication_check_ms": avg_dedup,
             "avg_database_operations_ms": avg_db,
+            # Tagging metrics
+            "avg_tagging_duration_ms": avg_tagging,
+            "avg_llm_tagging_ms": avg_llm_tagging,
+            "avg_llm_prompt_tokens": avg_llm_prompt,
+            "avg_llm_completion_tokens": avg_llm_completion,
+            "avg_llm_total_tokens": avg_llm_total,
+            "avg_llm_cost_usd": avg_llm_cost,
+            "total_llm_cost_usd": total_llm_cost,
+            "llm_cache_hit_rate": llm_cache_rate,
             "error_rates_by_stage": {},  # Placeholder for future error tracking
         }
 

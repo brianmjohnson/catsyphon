@@ -113,6 +113,15 @@ async def get_ingestion_stats(
         avg_parse_duration_ms=stats["avg_parse_duration_ms"],  # type: ignore
         avg_deduplication_check_ms=stats["avg_deduplication_check_ms"],  # type: ignore
         avg_database_operations_ms=stats["avg_database_operations_ms"],  # type: ignore
+        # Tagging metrics
+        avg_tagging_duration_ms=stats["avg_tagging_duration_ms"],  # type: ignore
+        avg_llm_tagging_ms=stats["avg_llm_tagging_ms"],  # type: ignore
+        avg_llm_prompt_tokens=stats["avg_llm_prompt_tokens"],  # type: ignore
+        avg_llm_completion_tokens=stats["avg_llm_completion_tokens"],  # type: ignore
+        avg_llm_total_tokens=stats["avg_llm_total_tokens"],  # type: ignore
+        avg_llm_cost_usd=stats["avg_llm_cost_usd"],  # type: ignore
+        total_llm_cost_usd=stats["total_llm_cost_usd"],  # type: ignore
+        llm_cache_hit_rate=stats["llm_cache_hit_rate"],  # type: ignore
         error_rates_by_stage=stats["error_rates_by_stage"],  # type: ignore
     )
 
