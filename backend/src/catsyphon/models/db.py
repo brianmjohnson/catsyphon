@@ -824,7 +824,7 @@ class IngestionJob(Base):
         Integer, nullable=False, server_default="0"
     )
     metrics: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+        JSONB, nullable=False, server_default="{}"
     )  # Stage-level performance metrics: {parse, canonical, llm, db, total}
 
     started_at: Mapped[datetime] = mapped_column(
