@@ -46,6 +46,7 @@ import type {
   WatchConfigurationResponse,
   IngestionJobResponse,
 } from '@/types/api';
+import { Tooltip } from '@/components';
 
 type Tab = 'upload' | 'watch' | 'activity' | 'history';
 
@@ -900,17 +901,23 @@ function LiveActivityTab() {
           {watchStatus ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Total</span>
+                <Tooltip content="Total number of configured watch directories">
+                  <span className="text-sm text-muted-foreground">Total</span>
+                </Tooltip>
                 <span className="text-2xl font-bold">{watchStatus.total_configs}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Active</span>
+                <Tooltip content="Watch directories currently monitoring for new log files">
+                  <span className="text-sm text-muted-foreground">Active</span>
+                </Tooltip>
                 <span className="text-lg font-semibold text-green-600">
                   {watchStatus.active_count}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Inactive</span>
+                <Tooltip content="Watch directories that have been stopped">
+                  <span className="text-sm text-muted-foreground">Inactive</span>
+                </Tooltip>
                 <span className="text-lg font-semibold text-gray-500">
                   {watchStatus.inactive_count}
                 </span>
@@ -932,19 +939,27 @@ function LiveActivityTab() {
           {stats ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">All Time</span>
+                <Tooltip content="Total number of ingestion jobs ever processed">
+                  <span className="text-sm text-muted-foreground">All Time</span>
+                </Tooltip>
                 <span className="text-2xl font-bold">{stats.total_jobs}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-green-600">Success</span>
+                <Tooltip content="Conversations successfully parsed and stored in database">
+                  <span className="text-green-600">Success</span>
+                </Tooltip>
                 <span className="font-semibold">{stats.by_status.success || 0}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-destructive">Failed</span>
+                <Tooltip content="Ingestion attempts that encountered errors">
+                  <span className="text-destructive">Failed</span>
+                </Tooltip>
                 <span className="font-semibold">{stats.by_status.failed || 0}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Duplicate</span>
+                <Tooltip content="Files skipped because they were already ingested">
+                  <span className="text-muted-foreground">Duplicate</span>
+                </Tooltip>
                 <span className="font-semibold">{stats.by_status.duplicate || 0}</span>
               </div>
             </div>
@@ -964,7 +979,9 @@ function LiveActivityTab() {
           {stats ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Usage Rate</span>
+                <Tooltip content="Percentage of jobs using fast incremental parsing (10-106x faster)">
+                  <span className="text-sm text-muted-foreground">Usage Rate</span>
+                </Tooltip>
                 <span className="text-2xl font-bold text-purple-600">
                   {stats.incremental_percentage
                     ? `${stats.incremental_percentage.toFixed(1)}%`
@@ -972,11 +989,15 @@ function LiveActivityTab() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Incremental Jobs</span>
+                <Tooltip content="Jobs that only parsed new content appended to existing files">
+                  <span className="text-muted-foreground">Incremental Jobs</span>
+                </Tooltip>
                 <span className="font-semibold">{stats.incremental_jobs}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Full Parse Jobs</span>
+                <Tooltip content="Jobs that parsed entire files from scratch">
+                  <span className="text-muted-foreground">Full Parse Jobs</span>
+                </Tooltip>
                 <span className="font-semibold">{stats.total_jobs - stats.incremental_jobs}</span>
               </div>
             </div>
@@ -999,7 +1020,9 @@ function LiveActivityTab() {
           {stats ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Total Avg</span>
+                <Tooltip content="Average total time to process one ingestion job">
+                  <span className="text-sm text-muted-foreground">Total Avg</span>
+                </Tooltip>
                 <span className="text-2xl font-bold">
                   {stats.avg_processing_time_ms
                     ? `${stats.avg_processing_time_ms.toFixed(0)}ms`
@@ -1007,7 +1030,9 @@ function LiveActivityTab() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Parsing</span>
+                <Tooltip content="Time to parse conversation log into structured data">
+                  <span className="text-muted-foreground">Parsing</span>
+                </Tooltip>
                 <span className="font-semibold">
                   {stats.avg_parse_duration_ms
                     ? `${stats.avg_parse_duration_ms.toFixed(0)}ms`
@@ -1015,7 +1040,9 @@ function LiveActivityTab() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Deduplication</span>
+                <Tooltip content="Time to check if file was already ingested (hash + DB lookup)">
+                  <span className="text-muted-foreground">Deduplication</span>
+                </Tooltip>
                 <span className="font-semibold">
                   {stats.avg_deduplication_check_ms
                     ? `${stats.avg_deduplication_check_ms.toFixed(0)}ms`
@@ -1023,7 +1050,9 @@ function LiveActivityTab() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Database Ops</span>
+                <Tooltip content="Time to insert conversation, messages, and file records into PostgreSQL">
+                  <span className="text-muted-foreground">Database Ops</span>
+                </Tooltip>
                 <span className="font-semibold">
                   {stats.avg_database_operations_ms
                     ? `${stats.avg_database_operations_ms.toFixed(0)}ms`
@@ -1031,7 +1060,9 @@ function LiveActivityTab() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Tagging</span>
+                <Tooltip content="Time for AI tagging (rule-based + LLM sentiment/intent analysis)">
+                  <span className="text-muted-foreground">Tagging</span>
+                </Tooltip>
                 <span className="font-semibold">
                   {stats.avg_tagging_duration_ms
                     ? `${stats.avg_tagging_duration_ms.toFixed(0)}ms`
@@ -1055,7 +1086,9 @@ function LiveActivityTab() {
           {stats ? (
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Total Failed</span>
+                <Tooltip content="Total number of ingestion jobs that failed with errors">
+                  <span className="text-sm text-muted-foreground">Total Failed</span>
+                </Tooltip>
                 <span className="text-2xl font-bold text-destructive">
                   {stats.by_status.failed || 0}
                 </span>
@@ -1091,7 +1124,9 @@ function LiveActivityTab() {
           {stats ? (
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Total Cost</span>
+                <Tooltip content="Total cumulative cost of all OpenAI API calls for tagging">
+                  <span className="text-sm text-muted-foreground">Total Cost</span>
+                </Tooltip>
                 <span className="text-2xl font-bold">
                   {stats.total_llm_cost_usd
                     ? `$${stats.total_llm_cost_usd.toFixed(4)}`
@@ -1100,7 +1135,9 @@ function LiveActivityTab() {
               </div>
               <div className="space-y-2 pt-2 border-t border-border/50">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Avg Cost/Job</span>
+                  <Tooltip content="Average OpenAI API cost per ingestion job (gpt-4o-mini)">
+                    <span className="text-muted-foreground">Avg Cost/Job</span>
+                  </Tooltip>
                   <span className="font-semibold">
                     {stats.avg_llm_cost_usd
                       ? `$${stats.avg_llm_cost_usd.toFixed(5)}`
@@ -1108,7 +1145,9 @@ function LiveActivityTab() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Avg Tokens</span>
+                  <Tooltip content="Average total tokens (prompt + completion) per LLM tagging call">
+                    <span className="text-muted-foreground">Avg Tokens</span>
+                  </Tooltip>
                   <span className="font-semibold">
                     {stats.avg_llm_total_tokens
                       ? Math.round(stats.avg_llm_total_tokens)
@@ -1116,7 +1155,9 @@ function LiveActivityTab() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Cache Hit Rate</span>
+                  <Tooltip content="Percentage of tagging requests served from cache (reduces cost by 80-90%)">
+                    <span className="text-muted-foreground">Cache Hit Rate</span>
+                  </Tooltip>
                   <span className="font-semibold">
                     {stats.llm_cache_hit_rate !== null && stats.llm_cache_hit_rate !== undefined
                       ? `${(stats.llm_cache_hit_rate * 100).toFixed(1)}%`
@@ -1124,7 +1165,9 @@ function LiveActivityTab() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Avg Duration</span>
+                  <Tooltip content="Average time spent on OpenAI API call (excludes cache hits)">
+                    <span className="text-muted-foreground">Avg Duration</span>
+                  </Tooltip>
                   <span className="font-semibold">
                     {stats.avg_llm_tagging_ms
                       ? `${stats.avg_llm_tagging_ms.toFixed(0)}ms`
