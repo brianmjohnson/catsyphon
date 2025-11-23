@@ -3,10 +3,10 @@ Ingestion job repository.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import and_, desc, func
+from sqlalchemy import and_, desc, func, text
 from sqlalchemy.orm import Session
 
 from catsyphon.db.repositories.base import BaseRepository
@@ -228,8 +228,6 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
         Returns:
             Dictionary with statistics including stage-level metrics
         """
-        from datetime import datetime, timedelta, timezone
-
         total = self.count()
         by_status = self.count_by_status()
         by_source = self.count_by_source_type()
@@ -249,8 +247,6 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
         )
 
         # Percentiles for processing time (p50, p75, p90, p99)
-        from sqlalchemy import text
-
         percentiles_query = text(
             """
             SELECT
