@@ -53,6 +53,7 @@ def _conversation_to_list_item(
     epoch_count: Optional[int] = None,
     files_count: Optional[int] = None,
     children_count: Optional[int] = None,
+    depth_level: Optional[int] = None,
 ) -> ConversationListItem:
     """
     Convert Conversation model to ConversationListItem schema.
@@ -63,6 +64,7 @@ def _conversation_to_list_item(
         epoch_count: Pre-computed epoch count (from SQL aggregation)
         files_count: Pre-computed files count (from SQL aggregation)
         children_count: Pre-computed children count (from SQL aggregation)
+        depth_level: Hierarchy depth (0 for parent, 1 for child)
 
     Returns:
         ConversationListItem schema
@@ -94,6 +96,10 @@ def _conversation_to_list_item(
         item.children_count = children_count
     else:
         item.children_count = len(conv.children) if hasattr(conv, 'children') and conv.children else 0
+
+    # Depth level for hierarchical display
+    if depth_level is not None:
+        item.depth_level = depth_level
 
     return item
 
@@ -191,8 +197,8 @@ async def list_conversations(
     # Get total count for pagination
     total = repo.count_by_filters(workspace_id=workspace_id, **filters)
 
-    # Get conversations WITH counts (efficient SQL aggregation)
-    results = repo.get_with_counts(
+    # Get conversations WITH counts in hierarchical order (parents followed by children)
+    results = repo.get_with_counts_hierarchical(
         workspace_id=workspace_id,
         **filters,
         limit=page_size,
@@ -207,8 +213,9 @@ async def list_conversations(
             epoch_count=epoch_count,
             files_count=files_count,
             children_count=child_count,
+            depth_level=depth,
         )
-        for conv, msg_count, epoch_count, files_count, child_count in results
+        for conv, msg_count, epoch_count, files_count, child_count, depth in results
     ]
 
     return ConversationListResponse(

@@ -491,6 +491,153 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         return query.all()
 
+    def get_with_counts_hierarchical(
+        self,
+        workspace_id: uuid.UUID,
+        project_id: Optional[uuid.UUID] = None,
+        developer_id: Optional[uuid.UUID] = None,
+        agent_type: Optional[str] = None,
+        status: Optional[str] = None,
+        success: Optional[bool] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        collector_id: Optional[uuid.UUID] = None,
+        order_by: str = "start_time",
+        order_dir: str = "desc",
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Tuple[Conversation, int, int, int, int, int]]:
+        """
+        Get conversations with hierarchical ordering (parents followed by children).
+
+        Returns conversations organized hierarchically: each parent conversation is
+        immediately followed by its child conversations. Parents are sorted by the
+        specified column, children are sorted by start_time ascending.
+
+        Returns list of (conversation, message_count, epoch_count, files_count,
+        children_count, depth_level) tuples.
+
+        Args:
+            workspace_id: Workspace UUID (required)
+            project_id: Filter by project
+            developer_id: Filter by developer
+            agent_type: Filter by agent type (partial match)
+            status: Filter by status
+            success: Filter by success status
+            start_date: Filter by start date (>=)
+            end_date: Filter by end date (<=)
+            collector_id: Filter by collector
+            order_by: Column to order parents by
+            order_dir: Order direction for parents ('asc' or 'desc')
+            limit: Maximum number of parent conversations (children not counted)
+            offset: Number of parent conversations to skip
+
+        Returns:
+            List of (Conversation, message_count, epoch_count, files_count,
+                    children_count, depth_level) tuples where depth_level is 0
+                    for parents and 1 for children
+        """
+        # First, build query for parent conversations only
+        parent_query = (
+            self.session.query(
+                Conversation,
+                Conversation.message_count,
+                Conversation.epoch_count,
+                Conversation.files_count,
+                Conversation.children_count,
+            )
+            .filter(
+                Conversation.workspace_id == workspace_id,
+                Conversation.parent_conversation_id.is_(None),
+            )
+            .options(
+                selectinload(Conversation.project),
+                selectinload(Conversation.developer),
+            )
+        )
+
+        # Apply filters
+        if project_id:
+            parent_query = parent_query.filter(Conversation.project_id == project_id)
+        if developer_id:
+            parent_query = parent_query.filter(Conversation.developer_id == developer_id)
+        if agent_type:
+            parent_query = parent_query.filter(Conversation.agent_type.ilike(f"%{agent_type}%"))
+        if status:
+            parent_query = parent_query.filter(Conversation.status == status)
+        if success is not None:
+            parent_query = parent_query.filter(Conversation.success == success)
+        if start_date:
+            parent_query = parent_query.filter(Conversation.start_time >= start_date)
+        if end_date:
+            parent_query = parent_query.filter(Conversation.start_time <= end_date)
+        if collector_id:
+            parent_query = parent_query.filter(Conversation.collector_id == collector_id)
+
+        # Order parents
+        order_col = getattr(Conversation, order_by, Conversation.start_time)
+        parent_query = parent_query.order_by(
+            order_col.desc() if order_dir == "desc" else order_col.asc()
+        )
+
+        # Paginate parents only
+        if limit:
+            parent_query = parent_query.limit(limit)
+        if offset:
+            parent_query = parent_query.offset(offset)
+
+        parents = parent_query.all()
+
+        # Now fetch children for these parents
+        if not parents:
+            return []
+
+        parent_ids = [p[0].id for p in parents]
+
+        children_query = (
+            self.session.query(
+                Conversation,
+                Conversation.message_count,
+                Conversation.epoch_count,
+                Conversation.files_count,
+                Conversation.children_count,
+            )
+            .filter(
+                Conversation.workspace_id == workspace_id,
+                Conversation.parent_conversation_id.in_(parent_ids),
+            )
+            .options(
+                selectinload(Conversation.project),
+                selectinload(Conversation.developer),
+            )
+            .order_by(Conversation.start_time.asc())
+        )
+
+        children = children_query.all()
+
+        # Group children by parent_id
+        children_by_parent: dict[uuid.UUID, list] = {}
+        for child_tuple in children:
+            child_conv = child_tuple[0]
+            parent_id = child_conv.parent_conversation_id
+            if parent_id not in children_by_parent:
+                children_by_parent[parent_id] = []
+            children_by_parent[parent_id].append(child_tuple)
+
+        # Build final result: parent followed by its children
+        result: List[Tuple[Conversation, int, int, int, int, int]] = []
+        for parent_tuple in parents:
+            parent_conv = parent_tuple[0]
+            # Add parent with depth_level = 0
+            result.append((*parent_tuple, 0))
+
+            # Add children with depth_level = 1
+            if parent_conv.id in children_by_parent:
+                for child_tuple in children_by_parent[parent_conv.id]:
+                    result.append((*child_tuple, 1))
+
+        return result
+
     def get_by_workspace(
         self, workspace_id: uuid.UUID, limit: Optional[int] = None, offset: int = 0
     ) -> List[Conversation]:
