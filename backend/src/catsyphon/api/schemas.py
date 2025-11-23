@@ -202,6 +202,7 @@ class ConversationListItem(BaseModel):
     epoch_count: int = 0
     files_count: int = 0
     children_count: int = 0  # Number of child conversations (agents, etc.)
+    depth_level: int = 0  # Hierarchy depth: 0 for parent, 1 for child
 
     # Related objects (optional, for joins)
     project: Optional[ProjectResponse] = None

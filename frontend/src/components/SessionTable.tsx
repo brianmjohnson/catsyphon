@@ -131,6 +131,9 @@ export function SessionTable({
         <tbody className={isObservatory ? 'divide-y divide-border/30' : 'bg-card divide-y divide-border'}>
           {sessions.map((session) => {
             const isHighlighted = highlightNewIds?.has(session.id);
+            const conv = session as ConversationListItem;
+            const depthLevel = conv.depth_level ?? 0;
+            const isChild = depthLevel > 0;
 
             return (
               <tr
@@ -141,15 +144,20 @@ export function SessionTable({
                     ? `duration-300 hover:bg-cyan-400/5 ${
                         isHighlighted
                           ? 'bg-emerald-400/10 animate-pulse border-l-2 border-l-emerald-400'
-                          : ''
+                          : isChild
+                            ? 'bg-slate-800/30'
+                            : ''
                       }`
-                    : 'hover:bg-accent'
+                    : isChild
+                      ? 'bg-muted/30 hover:bg-muted/50'
+                      : 'hover:bg-accent'
                 }`}
               >
                 {columns.map((col) => (
                   <td
                     key={col.id}
                     className={`px-${isObservatory ? '4' : '6'} py-${isObservatory ? '3.5' : '4'} ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''} ${col.id.includes('time') || col.id === 'messages' ? 'whitespace-nowrap' : ''}`}
+                    style={col.id === 'agent_type' && isChild ? { paddingLeft: `calc(${isObservatory ? '1rem' : '1.5rem'} + 1em)` } : undefined}
                   >
                     {col.render(session)}
                   </td>

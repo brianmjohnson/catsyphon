@@ -102,6 +102,7 @@ export interface ConversationListItem {
   epoch_count: number;
   files_count: number;
   children_count: number;
+  depth_level: number; // Hierarchy depth: 0 for parent, 1 for child
 
   // Related objects (optional)
   project?: ProjectResponse;
