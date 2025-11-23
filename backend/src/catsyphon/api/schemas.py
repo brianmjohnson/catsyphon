@@ -417,8 +417,54 @@ class IngestionStatsResponse(BaseModel):
     by_status: dict[str, int]
     by_source_type: dict[str, int]
     avg_processing_time_ms: Optional[float] = None
+    peak_processing_time_ms: Optional[float] = Field(
+        default=None,
+        description="Peak (maximum) processing time for any single job",
+    )
+    processing_time_percentiles: dict[str, Optional[float]] = Field(
+        default_factory=dict,
+        description="Processing time percentiles (p50, p75, p90, p99) in milliseconds",
+    )
     incremental_jobs: int
     incremental_percentage: float
+    incremental_speedup: Optional[float] = Field(
+        default=None,
+        description="Speedup factor of incremental parsing (avg_full / avg_incremental)",
+    )
+
+    # Recent activity metrics
+    jobs_last_hour: int = Field(
+        default=0,
+        description="Number of jobs processed in the last hour",
+    )
+    jobs_last_24h: int = Field(
+        default=0,
+        description="Number of jobs processed in the last 24 hours",
+    )
+    processing_rate_per_minute: float = Field(
+        default=0.0,
+        description="Average processing rate (jobs per minute over last hour)",
+    )
+
+    # Success/failure metrics
+    success_rate: Optional[float] = Field(
+        default=None,
+        description="Success rate as percentage (0-100)",
+    )
+    failure_rate: Optional[float] = Field(
+        default=None,
+        description="Failure rate as percentage (0-100)",
+    )
+    time_since_last_failure_minutes: Optional[float] = Field(
+        default=None,
+        description="Minutes since the last failed ingestion job",
+    )
+
+    # Time-series data for sparklines
+    timeseries_24h: list[dict[str, any]] = Field(
+        default_factory=list,
+        description="Hourly time-series data for last 24 hours (for sparklines)",
+    )
 
     # Stage-level aggregate metrics
     avg_parse_duration_ms: Optional[float] = Field(

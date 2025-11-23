@@ -228,6 +228,8 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
         Returns:
             Dictionary with statistics including stage-level metrics
         """
+        from datetime import datetime, timedelta, timezone
+
         total = self.count()
         by_status = self.count_by_status()
         by_source = self.count_by_source_type()
@@ -239,12 +241,130 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             .scalar()
         )
 
+        # Peak processing time
+        peak_time = (
+            self.session.query(func.max(IngestionJob.processing_time_ms))
+            .filter(IngestionJob.processing_time_ms.isnot(None))
+            .scalar()
+        )
+
+        # Percentiles for processing time (p50, p75, p90, p99)
+        from sqlalchemy import text
+
+        percentiles_query = text(
+            """
+            SELECT
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY processing_time_ms) as p50,
+                percentile_cont(0.75) WITHIN GROUP (ORDER BY processing_time_ms) as p75,
+                percentile_cont(0.9) WITHIN GROUP (ORDER BY processing_time_ms) as p90,
+                percentile_cont(0.99) WITHIN GROUP (ORDER BY processing_time_ms) as p99
+            FROM ingestion_jobs
+            WHERE processing_time_ms IS NOT NULL
+            """
+        )
+        percentiles_result = self.session.execute(percentiles_query).first()
+        processing_time_percentiles = {
+            "p50": float(percentiles_result[0]) if percentiles_result and percentiles_result[0] else None,
+            "p75": float(percentiles_result[1]) if percentiles_result and percentiles_result[1] else None,
+            "p90": float(percentiles_result[2]) if percentiles_result and percentiles_result[2] else None,
+            "p99": float(percentiles_result[3]) if percentiles_result and percentiles_result[3] else None,
+        }
+
+        # Recent activity metrics
+        now = datetime.now(timezone.utc)
+        one_hour_ago = now - timedelta(hours=1)
+        one_day_ago = now - timedelta(hours=24)
+
+        jobs_last_hour = (
+            self.session.query(func.count(IngestionJob.id))
+            .filter(IngestionJob.started_at >= one_hour_ago)
+            .scalar()
+        )
+
+        jobs_last_24h = (
+            self.session.query(func.count(IngestionJob.id))
+            .filter(IngestionJob.started_at >= one_day_ago)
+            .scalar()
+        )
+
+        # Processing rate (jobs per minute over last hour)
+        processing_rate = jobs_last_hour / 60.0 if jobs_last_hour > 0 else 0.0
+
+        # Time-series data for sparklines (last 24 hours, hourly buckets)
+        timeseries_query = text(
+            """
+            SELECT
+                date_trunc('hour', started_at) as hour,
+                COUNT(*) as job_count,
+                AVG(processing_time_ms) as avg_time,
+                COUNT(CASE WHEN status = 'success' THEN 1 END) as success_count,
+                COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count
+            FROM ingestion_jobs
+            WHERE started_at >= :one_day_ago
+            GROUP BY hour
+            ORDER BY hour ASC
+            """
+        )
+        timeseries_result = self.session.execute(
+            timeseries_query, {"one_day_ago": one_day_ago}
+        ).fetchall()
+
+        timeseries_data = [
+            {
+                "timestamp": row[0].isoformat(),
+                "job_count": row[1],
+                "avg_processing_time_ms": float(row[2]) if row[2] else None,
+                "success_count": row[3],
+                "failed_count": row[4],
+            }
+            for row in timeseries_result
+        ]
+
+        # Time since last failure
+        last_failure = (
+            self.session.query(IngestionJob.started_at)
+            .filter(IngestionJob.status == "failed")
+            .order_by(IngestionJob.started_at.desc())
+            .first()
+        )
+        time_since_last_failure_minutes = None
+        if last_failure:
+            delta = now - last_failure[0]
+            time_since_last_failure_minutes = delta.total_seconds() / 60.0
+
+        # Success and failure rates
+        success_rate = (
+            (by_status.get("success", 0) / total * 100) if total > 0 else None
+        )
+        failure_rate = (by_status.get("failed", 0) / total * 100) if total > 0 else None
+
         # Incremental parsing usage
         incremental_count = (
             self.session.query(func.count(IngestionJob.id))
             .filter(IngestionJob.incremental == True)  # noqa: E712
             .scalar()
         )
+
+        # Incremental speedup calculation
+        avg_incremental_time = (
+            self.session.query(func.avg(IngestionJob.processing_time_ms))
+            .filter(IngestionJob.incremental == True)  # noqa: E712
+            .filter(IngestionJob.processing_time_ms.isnot(None))
+            .scalar()
+        )
+        avg_full_parse_time = (
+            self.session.query(func.avg(IngestionJob.processing_time_ms))
+            .filter(IngestionJob.incremental == False)  # noqa: E712
+            .filter(IngestionJob.processing_time_ms.isnot(None))
+            .scalar()
+        )
+        incremental_speedup = None
+        if (
+            avg_incremental_time
+            and avg_full_parse_time
+            and avg_incremental_time > 0
+        ):
+            incremental_speedup = avg_full_parse_time / avg_incremental_time
 
         # Calculate stage-level averages from metrics JSONB field
         # Fetch all jobs with metrics (successful jobs only for meaningful averages)
@@ -333,10 +453,23 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             "by_status": by_status,
             "by_source_type": by_source,
             "avg_processing_time_ms": float(avg_time) if avg_time else None,
+            "peak_processing_time_ms": float(peak_time) if peak_time else None,
+            "processing_time_percentiles": processing_time_percentiles,
             "incremental_jobs": incremental_count,
             "incremental_percentage": (
                 (incremental_count / total * 100) if total > 0 else 0
             ),
+            "incremental_speedup": incremental_speedup,
+            # Recent activity metrics
+            "jobs_last_hour": jobs_last_hour,
+            "jobs_last_24h": jobs_last_24h,
+            "processing_rate_per_minute": processing_rate,
+            # Success/failure metrics
+            "success_rate": success_rate,
+            "failure_rate": failure_rate,
+            "time_since_last_failure_minutes": time_since_last_failure_minutes,
+            # Time-series data for sparklines
+            "timeseries_24h": timeseries_data,
             # Stage-level metrics
             "avg_parse_duration_ms": avg_parse,
             "avg_deduplication_check_ms": avg_dedup,

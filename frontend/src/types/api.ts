@@ -274,13 +274,42 @@ export interface IngestionJobResponse {
   metrics: Record<string, any>;
 }
 
+export interface TimeseriesDataPoint {
+  timestamp: string;
+  job_count: number;
+  avg_processing_time_ms: number | null;
+  success_count: number;
+  failed_count: number;
+}
+
+export interface ProcessingTimePercentiles {
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p99: number | null;
+}
+
 export interface IngestionStatsResponse {
   total_jobs: number;
   by_status: Record<string, number>;
   by_source_type: Record<string, number>;
   avg_processing_time_ms: number | null;
+  peak_processing_time_ms: number | null;
+  processing_time_percentiles: ProcessingTimePercentiles;
   incremental_jobs: number;
   incremental_percentage: number | null;
+  incremental_speedup: number | null;
+  // Recent activity metrics
+  jobs_last_hour: number;
+  jobs_last_24h: number;
+  processing_rate_per_minute: number;
+  // Success/failure metrics
+  success_rate: number | null;
+  failure_rate: number | null;
+  time_since_last_failure_minutes: number | null;
+  // Time-series data for sparklines
+  timeseries_24h: TimeseriesDataPoint[];
+  // Stage-level metrics
   avg_parse_duration_ms: number | null;
   avg_deduplication_check_ms: number | null;
   avg_database_operations_ms: number | null;

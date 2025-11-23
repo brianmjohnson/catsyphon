@@ -46,7 +46,7 @@ import type {
   WatchConfigurationResponse,
   IngestionJobResponse,
 } from '@/types/api';
-import { Tooltip } from '@/components';
+import { Tooltip, Sparkline } from '@/components';
 
 type Tab = 'upload' | 'watch' | 'activity' | 'history';
 
@@ -1175,6 +1175,189 @@ function LiveActivityTab() {
                   </span>
                 </div>
               </div>
+            </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
+        </div>
+      </div>
+
+      {/* Health Monitoring Grid - Third Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Recent Activity Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-cyan-500/10 rounded-lg">
+              <Activity className="h-5 w-5 text-cyan-600" />
+            </div>
+            <h3 className="font-semibold">Recent Activity</h3>
+          </div>
+          {stats ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <Tooltip content="Number of ingestion jobs processed in the last hour">
+                  <span className="text-sm text-muted-foreground">Last Hour</span>
+                </Tooltip>
+                <span className="text-2xl font-bold text-cyan-600">
+                  {stats.jobs_last_hour}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="Number of ingestion jobs processed in the last 24 hours">
+                  <span className="text-muted-foreground">Last 24h</span>
+                </Tooltip>
+                <span className="font-semibold">{stats.jobs_last_24h}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="Average number of jobs processed per minute (over last hour)">
+                  <span className="text-muted-foreground">Processing Rate</span>
+                </Tooltip>
+                <span className="font-semibold">
+                  {stats.processing_rate_per_minute.toFixed(2)} jobs/min
+                </span>
+              </div>
+              {/* Sparkline showing activity over last 24h */}
+              {stats.timeseries_24h && stats.timeseries_24h.length > 0 && (
+                <div className="pt-2 border-t border-border/50">
+                  <div className="text-xs text-muted-foreground mb-1">24h Activity</div>
+                  <Sparkline
+                    data={stats.timeseries_24h.map((d) => d.job_count)}
+                    width={200}
+                    height={30}
+                    color="#06b6d4"
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
+        </div>
+
+        {/* Success Metrics Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-emerald-500/10 rounded-lg">
+              <CheckCircle className="h-5 w-5 text-emerald-600" />
+            </div>
+            <h3 className="font-semibold">Success Metrics</h3>
+          </div>
+          {stats ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <Tooltip content="Percentage of jobs that completed successfully">
+                  <span className="text-sm text-muted-foreground">Success Rate</span>
+                </Tooltip>
+                <span className="text-2xl font-bold text-emerald-600">
+                  {stats.success_rate !== null
+                    ? `${stats.success_rate.toFixed(1)}%`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="Percentage of jobs that failed with errors">
+                  <span className="text-muted-foreground">Failure Rate</span>
+                </Tooltip>
+                <span className="font-semibold text-destructive">
+                  {stats.failure_rate !== null
+                    ? `${stats.failure_rate.toFixed(1)}%`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="Time elapsed since the last failed ingestion job">
+                  <span className="text-muted-foreground">Last Failure</span>
+                </Tooltip>
+                <span className="font-semibold">
+                  {stats.time_since_last_failure_minutes !== null
+                    ? stats.time_since_last_failure_minutes < 60
+                      ? `${Math.floor(stats.time_since_last_failure_minutes)}m ago`
+                      : `${Math.floor(stats.time_since_last_failure_minutes / 60)}h ago`
+                    : 'Never'}
+                </span>
+              </div>
+              {/* Sparkline showing success rate over time */}
+              {stats.timeseries_24h && stats.timeseries_24h.length > 0 && (
+                <div className="pt-2 border-t border-border/50">
+                  <div className="text-xs text-muted-foreground mb-1">24h Success Rate</div>
+                  <Sparkline
+                    data={stats.timeseries_24h.map((d) =>
+                      d.job_count > 0 ? (d.success_count / d.job_count) * 100 : 0
+                    )}
+                    width={200}
+                    height={30}
+                    color="#10b981"
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />
+          )}
+        </div>
+
+        {/* Performance Health Card */}
+        <div className="p-6 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-amber-500/10 rounded-lg">
+              <Zap className="h-5 w-5 text-amber-600" />
+            </div>
+            <h3 className="font-semibold">Performance Health</h3>
+          </div>
+          {stats ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <Tooltip content="Median (p50) processing time - half of jobs are faster, half are slower">
+                  <span className="text-sm text-muted-foreground">p50 Time</span>
+                </Tooltip>
+                <span className="text-2xl font-bold text-amber-600">
+                  {stats.processing_time_percentiles.p50
+                    ? `${stats.processing_time_percentiles.p50.toFixed(0)}ms`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="90th percentile - 90% of jobs are faster than this">
+                  <span className="text-muted-foreground">p90</span>
+                </Tooltip>
+                <span className="font-semibold">
+                  {stats.processing_time_percentiles.p90
+                    ? `${stats.processing_time_percentiles.p90.toFixed(0)}ms`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="99th percentile - worst 1% of jobs">
+                  <span className="text-muted-foreground">p99</span>
+                </Tooltip>
+                <span className="font-semibold">
+                  {stats.processing_time_percentiles.p99
+                    ? `${stats.processing_time_percentiles.p99.toFixed(0)}ms`
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <Tooltip content="How much faster incremental parsing is compared to full parsing">
+                  <span className="text-muted-foreground">Incremental Speedup</span>
+                </Tooltip>
+                <span className="font-semibold text-purple-600">
+                  {stats.incremental_speedup
+                    ? `${stats.incremental_speedup.toFixed(1)}x`
+                    : 'N/A'}
+                </span>
+              </div>
+              {/* Sparkline showing processing time trend */}
+              {stats.timeseries_24h && stats.timeseries_24h.length > 0 && (
+                <div className="pt-2 border-t border-border/50">
+                  <div className="text-xs text-muted-foreground mb-1">24h Processing Time</div>
+                  <Sparkline
+                    data={stats.timeseries_24h.map((d) => d.avg_processing_time_ms || 0)}
+                    width={200}
+                    height={30}
+                    color="#f59e0b"
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <Loader2 className="h-6 w-6 animate-spin mt-4 text-muted-foreground" />

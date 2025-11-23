@@ -107,8 +107,21 @@ async def get_ingestion_stats(
         by_status=stats["by_status"],  # type: ignore
         by_source_type=stats["by_source_type"],  # type: ignore
         avg_processing_time_ms=stats["avg_processing_time_ms"],  # type: ignore
+        peak_processing_time_ms=stats["peak_processing_time_ms"],  # type: ignore
+        processing_time_percentiles=stats["processing_time_percentiles"],  # type: ignore
         incremental_jobs=stats["incremental_jobs"],  # type: ignore
         incremental_percentage=stats["incremental_percentage"],  # type: ignore
+        incremental_speedup=stats["incremental_speedup"],  # type: ignore
+        # Recent activity metrics
+        jobs_last_hour=stats["jobs_last_hour"],  # type: ignore
+        jobs_last_24h=stats["jobs_last_24h"],  # type: ignore
+        processing_rate_per_minute=stats["processing_rate_per_minute"],  # type: ignore
+        # Success/failure metrics
+        success_rate=stats["success_rate"],  # type: ignore
+        failure_rate=stats["failure_rate"],  # type: ignore
+        time_since_last_failure_minutes=stats["time_since_last_failure_minutes"],  # type: ignore
+        # Time-series data
+        timeseries_24h=stats["timeseries_24h"],  # type: ignore
         # Stage-level metrics
         avg_parse_duration_ms=stats["avg_parse_duration_ms"],  # type: ignore
         avg_deduplication_check_ms=stats["avg_deduplication_check_ms"],  # type: ignore

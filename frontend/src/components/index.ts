@@ -6,3 +6,4 @@ export { SessionTable, renderHelpers, type ColumnConfig } from './SessionTable';
 export { SessionPagination } from './SessionPagination';
 export { StatusBadge } from './StatusBadge';
 export { Tooltip } from './Tooltip';
+export { Sparkline } from './Sparkline';
