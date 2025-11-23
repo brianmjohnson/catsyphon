@@ -254,7 +254,9 @@ class OverviewStats(BaseModel):
     # Hierarchical conversation stats (Phase 2: Epic 7u2)
     total_main_conversations: int = 0  # Main human conversations
     total_agent_conversations: int = 0  # Agent/subagent conversations
-    conversations_by_type: dict[str, int] = Field(default_factory=dict)  # main, agent, mcp, etc.
+    conversations_by_type: dict[str, int] = Field(
+        default_factory=dict
+    )  # main, agent, mcp, etc.
 
 
 class AgentPerformanceStats(BaseModel):
@@ -384,6 +386,10 @@ class IngestionJobResponse(BaseModel):
     processing_time_ms: Optional[int] = None
     incremental: bool
     messages_added: int
+    metrics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Stage-level performance metrics (deduplication_check_ms, database_operations_ms, total_ms)",
+    )
     started_at: datetime
     completed_at: Optional[datetime] = None
     created_by: Optional[str] = None
@@ -411,8 +417,107 @@ class IngestionStatsResponse(BaseModel):
     by_status: dict[str, int]
     by_source_type: dict[str, int]
     avg_processing_time_ms: Optional[float] = None
+    peak_processing_time_ms: Optional[float] = Field(
+        default=None,
+        description="Peak (maximum) processing time for any single job",
+    )
+    processing_time_percentiles: dict[str, Optional[float]] = Field(
+        default_factory=dict,
+        description="Processing time percentiles (p50, p75, p90, p99) in milliseconds",
+    )
     incremental_jobs: int
     incremental_percentage: float
+    incremental_speedup: Optional[float] = Field(
+        default=None,
+        description="Speedup factor of incremental parsing (avg_full / avg_incremental)",
+    )
+
+    # Recent activity metrics
+    jobs_last_hour: int = Field(
+        default=0,
+        description="Number of jobs processed in the last hour",
+    )
+    jobs_last_24h: int = Field(
+        default=0,
+        description="Number of jobs processed in the last 24 hours",
+    )
+    processing_rate_per_minute: float = Field(
+        default=0.0,
+        description="Average processing rate (jobs per minute over last hour)",
+    )
+
+    # Success/failure metrics
+    success_rate: Optional[float] = Field(
+        default=None,
+        description="Success rate as percentage (0-100)",
+    )
+    failure_rate: Optional[float] = Field(
+        default=None,
+        description="Failure rate as percentage (0-100)",
+    )
+    time_since_last_failure_minutes: Optional[float] = Field(
+        default=None,
+        description="Minutes since the last failed ingestion job",
+    )
+
+    # Time-series data for sparklines
+    timeseries_24h: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Hourly time-series data for last 24 hours (for sparklines)",
+    )
+
+    # Stage-level aggregate metrics
+    avg_parse_duration_ms: Optional[float] = Field(
+        default=None,
+        description="Average parsing time (file reading + JSONL parsing)",
+    )
+    avg_deduplication_check_ms: Optional[float] = Field(
+        default=None,
+        description="Average deduplication check time (file hash + DB lookup)",
+    )
+    avg_database_operations_ms: Optional[float] = Field(
+        default=None,
+        description="Average database operations time (inserts, updates, queries)",
+    )
+
+    # Tagging aggregate metrics
+    avg_tagging_duration_ms: Optional[float] = Field(
+        default=None,
+        description="Average total tagging duration (rule-based + LLM + merging)",
+    )
+    avg_llm_tagging_ms: Optional[float] = Field(
+        default=None,
+        description="Average LLM tagging duration (OpenAI API call time only)",
+    )
+    avg_llm_prompt_tokens: Optional[float] = Field(
+        default=None,
+        description="Average LLM prompt tokens per tagging operation",
+    )
+    avg_llm_completion_tokens: Optional[float] = Field(
+        default=None,
+        description="Average LLM completion tokens per tagging operation",
+    )
+    avg_llm_total_tokens: Optional[float] = Field(
+        default=None,
+        description="Average total LLM tokens per tagging operation",
+    )
+    avg_llm_cost_usd: Optional[float] = Field(
+        default=None,
+        description="Average LLM cost per tagging operation (USD)",
+    )
+    total_llm_cost_usd: Optional[float] = Field(
+        default=None,
+        description="Total LLM cost across all tagged jobs (USD)",
+    )
+    llm_cache_hit_rate: Optional[float] = Field(
+        default=None,
+        description="Percentage of LLM cache hits (0.0 to 1.0)",
+    )
+
+    error_rates_by_stage: dict[str, int] = Field(
+        default_factory=dict,
+        description="Count of errors by stage (if tracked in future)",
+    )
 
 
 # ===== Setup / Onboarding Schemas =====
@@ -503,7 +608,9 @@ class CanonicalMetadata(BaseModel):
 class CanonicalConfig(BaseModel):
     """Configuration used to generate canonical representation."""
 
-    canonical_type: str = Field(..., description="Type of canonical (tagging, insights, export)")
+    canonical_type: str = Field(
+        ..., description="Type of canonical (tagging, insights, export)"
+    )
     max_tokens: int = Field(..., description="Maximum tokens allowed")
     sampling_strategy: str = Field(..., description="Sampling strategy used")
 
@@ -514,14 +621,18 @@ class CanonicalResponse(BaseModel):
     id: UUID
     conversation_id: UUID
     version: int = Field(..., description="Canonical version for cache invalidation")
-    canonical_type: str = Field(..., description="Type of canonical (tagging, insights, export)")
+    canonical_type: str = Field(
+        ..., description="Type of canonical (tagging, insights, export)"
+    )
     narrative: str = Field(..., description="Play-format narrative of conversation")
     token_count: int = Field(..., description="Number of tokens in narrative")
     metadata: CanonicalMetadata = Field(..., description="Extracted metadata")
     config: CanonicalConfig = Field(..., description="Configuration used")
 
     # Source conversation metadata
-    source_message_count: int = Field(..., description="Total messages in source conversation")
+    source_message_count: int = Field(
+        ..., description="Total messages in source conversation"
+    )
     source_token_estimate: int = Field(..., description="Estimated tokens in source")
 
     # Generation metadata
@@ -545,11 +656,11 @@ class RegenerateCanonicalRequest(BaseModel):
 
     canonical_type: str = Field(
         default="tagging",
-        description="Type of canonical to regenerate (tagging, insights, export)"
+        description="Type of canonical to regenerate (tagging, insights, export)",
     )
     sampling_strategy: str = Field(
         default="semantic",
-        description="Sampling strategy (semantic, epoch, chronological)"
+        description="Sampling strategy (semantic, epoch, chronological)",
     )
 
 
@@ -585,50 +696,35 @@ class InsightsResponse(BaseModel):
 
     # Qualitative insights from LLM
     workflow_patterns: list[str] = Field(
-        default_factory=list,
-        description="Observable workflow patterns"
+        default_factory=list, description="Observable workflow patterns"
     )
     productivity_indicators: list[str] = Field(
-        default_factory=list,
-        description="Productivity signals"
+        default_factory=list, description="Productivity signals"
     )
     collaboration_quality: int = Field(
-        ...,
-        ge=1,
-        le=10,
-        description="Human-AI collaboration quality (1-10)"
+        ..., ge=1, le=10, description="Human-AI collaboration quality (1-10)"
     )
     key_moments: list[KeyMoment] = Field(
-        default_factory=list,
-        description="Critical turning points"
+        default_factory=list, description="Critical turning points"
     )
     learning_opportunities: list[str] = Field(
-        default_factory=list,
-        description="Areas for improvement"
+        default_factory=list, description="Areas for improvement"
     )
     agent_effectiveness: int = Field(
-        ...,
-        ge=1,
-        le=10,
-        description="Agent helpfulness (1-10)"
+        ..., ge=1, le=10, description="Agent helpfulness (1-10)"
     )
     scope_clarity: int = Field(
-        ...,
-        ge=1,
-        le=10,
-        description="Goal definition quality (1-10)"
+        ..., ge=1, le=10, description="Goal definition quality (1-10)"
     )
     technical_debt_indicators: list[str] = Field(
-        default_factory=list,
-        description="Technical debt signals"
+        default_factory=list, description="Technical debt signals"
     )
     testing_behavior: str = Field(..., description="Testing practices observed")
     summary: str = Field(..., description="2-3 sentence summary")
 
     # Quantitative metrics
     quantitative_metrics: QuantitativeMetrics = Field(
-        ...,
-        description="Numerical metrics"
+        ..., description="Numerical metrics"
     )
 
     # Metadata

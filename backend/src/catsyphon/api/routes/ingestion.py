@@ -97,7 +97,7 @@ async def get_ingestion_stats(
     Get overall ingestion statistics.
 
     Returns:
-        Ingestion statistics including counts by status and source type
+        Ingestion statistics including counts by status, source type, and stage-level metrics
     """
     repo = IngestionJobRepository(session)
     stats = repo.get_stats()
@@ -107,8 +107,35 @@ async def get_ingestion_stats(
         by_status=stats["by_status"],  # type: ignore
         by_source_type=stats["by_source_type"],  # type: ignore
         avg_processing_time_ms=stats["avg_processing_time_ms"],  # type: ignore
+        peak_processing_time_ms=stats["peak_processing_time_ms"],  # type: ignore
+        processing_time_percentiles=stats["processing_time_percentiles"],  # type: ignore
         incremental_jobs=stats["incremental_jobs"],  # type: ignore
         incremental_percentage=stats["incremental_percentage"],  # type: ignore
+        incremental_speedup=stats["incremental_speedup"],  # type: ignore
+        # Recent activity metrics
+        jobs_last_hour=stats["jobs_last_hour"],  # type: ignore
+        jobs_last_24h=stats["jobs_last_24h"],  # type: ignore
+        processing_rate_per_minute=stats["processing_rate_per_minute"],  # type: ignore
+        # Success/failure metrics
+        success_rate=stats["success_rate"],  # type: ignore
+        failure_rate=stats["failure_rate"],  # type: ignore
+        time_since_last_failure_minutes=stats["time_since_last_failure_minutes"],  # type: ignore
+        # Time-series data
+        timeseries_24h=stats["timeseries_24h"],  # type: ignore
+        # Stage-level metrics
+        avg_parse_duration_ms=stats["avg_parse_duration_ms"],  # type: ignore
+        avg_deduplication_check_ms=stats["avg_deduplication_check_ms"],  # type: ignore
+        avg_database_operations_ms=stats["avg_database_operations_ms"],  # type: ignore
+        # Tagging metrics
+        avg_tagging_duration_ms=stats["avg_tagging_duration_ms"],  # type: ignore
+        avg_llm_tagging_ms=stats["avg_llm_tagging_ms"],  # type: ignore
+        avg_llm_prompt_tokens=stats["avg_llm_prompt_tokens"],  # type: ignore
+        avg_llm_completion_tokens=stats["avg_llm_completion_tokens"],  # type: ignore
+        avg_llm_total_tokens=stats["avg_llm_total_tokens"],  # type: ignore
+        avg_llm_cost_usd=stats["avg_llm_cost_usd"],  # type: ignore
+        total_llm_cost_usd=stats["total_llm_cost_usd"],  # type: ignore
+        llm_cache_hit_rate=stats["llm_cache_hit_rate"],  # type: ignore
+        error_rates_by_stage=stats["error_rates_by_stage"],  # type: ignore
     )
 
 

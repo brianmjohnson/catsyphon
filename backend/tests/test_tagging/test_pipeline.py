@@ -137,12 +137,23 @@ class TestTaggingPipeline:
         mock_rule_tagger.tag_conversation.return_value = rule_tags
         tagging_pipeline.rule_tagger = mock_rule_tagger
 
+        # LLM tagger now returns tuple (tags, metrics)
+        llm_metrics = {
+            "llm_tagging_ms": 150.0,
+            "llm_prompt_tokens": 100,
+            "llm_completion_tokens": 50,
+            "llm_total_tokens": 150,
+            "llm_cost_usd": 0.00001,
+            "llm_model": "gpt-4o-mini",
+            "llm_finish_reason": "stop",
+            "llm_cache_hit": False,
+        }
         mock_llm_tagger = Mock()
-        mock_llm_tagger.tag_conversation.return_value = llm_tags
+        mock_llm_tagger.tag_conversation.return_value = (llm_tags, llm_metrics)
         tagging_pipeline.llm_tagger = mock_llm_tagger
 
-        # Tag conversation
-        result = tagging_pipeline.tag_conversation(sample_conversation)
+        # Tag conversation (returns tuple)
+        result, metrics = tagging_pipeline.tag_conversation(sample_conversation)
 
         # Verify merged results
         assert result["intent"] == "bug_fix"  # From LLM
@@ -182,16 +193,17 @@ class TestTaggingPipeline:
         tagging_pipeline.rule_tagger = mock_rule_tagger
 
         mock_llm_tagger = Mock()
-        mock_llm_tagger.tag_conversation.return_value = llm_tags
+        llm_metrics = {"llm_tagging_ms": 100, "llm_cache_hit": False}
+        mock_llm_tagger.tag_conversation.return_value = (llm_tags, llm_metrics)
         tagging_pipeline.llm_tagger = mock_llm_tagger
 
         # First call - should hit taggers
-        result1 = tagging_pipeline.tag_conversation(sample_conversation)
+        result1, _ = tagging_pipeline.tag_conversation(sample_conversation)
         assert mock_rule_tagger.tag_conversation.call_count == 1
         assert mock_llm_tagger.tag_conversation.call_count == 1
 
         # Second call - should hit cache
-        result2 = tagging_pipeline.tag_conversation(sample_conversation)
+        result2, _ = tagging_pipeline.tag_conversation(sample_conversation)
         assert mock_rule_tagger.tag_conversation.call_count == 1  # Not called again
         assert mock_llm_tagger.tag_conversation.call_count == 1  # Not called again
 
@@ -230,7 +242,8 @@ class TestTaggingPipeline:
         pipeline.rule_tagger = mock_rule_tagger
 
         mock_llm_tagger = Mock()
-        mock_llm_tagger.tag_conversation.return_value = llm_tags
+        llm_metrics = {"llm_tagging_ms": 100, "llm_cache_hit": False}
+        mock_llm_tagger.tag_conversation.return_value = (llm_tags, llm_metrics)
         pipeline.llm_tagger = mock_llm_tagger
 
         # First call
@@ -359,10 +372,11 @@ class TestTaggingPipeline:
         tagging_pipeline.rule_tagger = mock_rule_tagger
 
         mock_llm_tagger = Mock()
-        mock_llm_tagger.tag_conversation.return_value = llm_tags
+        llm_metrics = {"llm_tagging_ms": 100, "llm_cache_hit": False}
+        mock_llm_tagger.tag_conversation.return_value = (llm_tags, llm_metrics)
         tagging_pipeline.llm_tagger = mock_llm_tagger
 
-        result = tagging_pipeline.tag_conversation(sample_conversation)
+        result, _ = tagging_pipeline.tag_conversation(sample_conversation)
 
         # Should return a dict
         assert isinstance(result, dict)
@@ -408,7 +422,8 @@ class TestTaggingPipeline:
         tagging_pipeline.rule_tagger = mock_rule_tagger
 
         mock_llm_tagger = Mock()
-        mock_llm_tagger.tag_conversation.return_value = llm_tags
+        llm_metrics = {"llm_tagging_ms": 100, "llm_cache_hit": False}
+        mock_llm_tagger.tag_conversation.return_value = (llm_tags, llm_metrics)
         tagging_pipeline.llm_tagger = mock_llm_tagger
 
         # Cache should be empty

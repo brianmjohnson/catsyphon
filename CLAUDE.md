@@ -117,6 +117,107 @@ Memory reduction (50k messages):     465x less memory
 - `backend/src/catsyphon/watch.py` - Watch daemon integration
 - `backend/tests/test_performance.py` - Performance benchmarks
 
+### Pipeline Metrics & Instrumentation
+
+CatSyphon instruments every stage of the ingestion pipeline to measure latency and identify bottlenecks. Stage-level metrics are stored in the `ingestion_jobs` table and displayed in real-time on the Live Activity UI.
+
+**Metrics Schema:**
+
+Each ingestion job tracks the following metrics in a JSONB column:
+
+```json
+{
+  "deduplication_check_ms": 45.2,     // File hash + DB lookup time
+  "database_operations_ms": 234.8,    // Inserts, updates, queries
+  "total_ms": 280.0                   // Sum of all stages
+}
+```
+
+**How Metrics Work:**
+
+1. **StageMetrics Helper** (`backend/src/catsyphon/pipeline/ingestion.py:40-64`):
+   - Lightweight timing tracker that records start/end timestamps for each pipeline stage
+   - Automatically calculates duration in milliseconds
+   - Converts to dict for JSONB storage
+
+2. **Ingestion Pipeline Instrumentation**:
+   - `deduplication_check_ms`: Time to hash file and check for duplicates in database
+   - `database_operations_ms`: Time for all SQLAlchemy operations (conversation insert, message bulk insert, file touched records)
+   - `total_ms`: Sum of all stage timings
+
+3. **Database Storage**:
+   - Metrics stored in `ingestion_jobs.metrics` JSONB column
+   - Allows flexible schema evolution without migrations
+   - Efficient querying via PostgreSQL JSONB operators
+
+4. **API Aggregation**:
+   - `/api/ingestion/stats` returns aggregate metrics:
+     - `avg_deduplication_check_ms`: Average dedup time across successful jobs
+     - `avg_database_operations_ms`: Average DB time across successful jobs
+     - `error_rates_by_stage`: Count of errors per stage (future)
+   - Only includes successful jobs for meaningful averages
+   - Failed jobs excluded to avoid skewing metrics
+
+5. **Live Activity UI** (`frontend/src/pages/Ingestion.tsx`):
+   - Real-time display of pipeline performance metrics
+   - 3x2 grid of metric cards:
+     - **Top Row**: Watch Directories, Total Jobs, Incremental Parsing
+     - **Bottom Row**: Pipeline Performance, Error Breakdown, LLM Usage (placeholder)
+   - Auto-refreshes every 10 seconds via TanStack Query polling
+   - Individual job cards show stage-level breakdown when metrics available
+
+**Interpreting Metrics:**
+
+Common patterns and their meanings:
+
+| Pattern | Meaning | Action |
+|---------|---------|--------|
+| High `deduplication_check_ms` (>100ms) | Large number of existing files in DB or slow file I/O | Consider indexing `raw_logs.content_hash` or optimizing file reading |
+| High `database_operations_ms` (>500ms) | Large conversation with many messages or slow DB | Check database performance, consider batching optimizations |
+| `total_ms` >> sum of stages | Unmeasured overhead or missing instrumentation | Add more stage tracking if needed |
+| Empty metrics on duplicates | Duplicate detected before metrics initialized | Expected behavior for early-stage duplicates |
+
+**Performance Impact:**
+
+- Metrics tracking adds <5% overhead to ingestion
+- StageMetrics uses <1KB memory per job
+- Minimal impact on production performance
+- Can be extended with more stages without code changes (just update StageMetrics calls)
+
+**Extending Metrics:**
+
+To add a new stage:
+
+1. Add timing calls in `ingest_conversation()`:
+   ```python
+   metrics.start_stage("new_stage_name_ms")
+   # ... stage logic ...
+   metrics.end_stage("new_stage_name_ms")
+   ```
+
+2. Update documentation (this file)
+
+3. Add frontend display in `Ingestion.tsx` (optional)
+
+4. No database migration required (JSONB is schema-less)
+
+**Testing:**
+
+Comprehensive test coverage in `backend/tests/test_pipeline_metrics.py`:
+- 9 unit tests for StageMetrics helper
+- 6 integration tests for metrics population
+- 7 API tests for endpoint responses
+- 4 performance tests for overhead validation
+
+**Key Files:**
+- `backend/src/catsyphon/pipeline/ingestion.py` - StageMetrics class and instrumentation
+- `backend/src/catsyphon/db/models.py:826-828` - metrics JSONB column
+- `backend/src/catsyphon/db/repositories/ingestion_job.py:224-285` - get_stats() aggregation
+- `backend/src/catsyphon/api/routes/ingestion.py:92-116` - /ingestion/stats endpoint
+- `backend/src/catsyphon/api/schemas.py:387-390, 422-433` - Response schemas
+- `frontend/src/pages/Ingestion.tsx` - Live Activity UI
+- `backend/tests/test_pipeline_metrics.py` - Comprehensive test suite
+
 ## Development Commands
 
 ### Environment Setup
