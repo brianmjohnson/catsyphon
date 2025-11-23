@@ -124,39 +124,14 @@ def ingest(
         console.print(f"[bold red]Error:[/bold red] Invalid path: {path}")
         raise typer.Exit(1)
 
-    # Filter out metadata-only files (files without conversation messages)
-    from catsyphon.pipeline.failure_tracking import track_skip
-
-    files_to_process = []
-    skipped_files = []
-    for file_path in all_files:
-        if is_conversational_log(file_path):
-            files_to_process.append(file_path)
-        else:
-            skipped_files.append(file_path)
-            # Track skip in database
-            track_skip(
-                file_path=file_path,
-                source_type="cli",
-                reason="Metadata-only file (no conversation messages found). "
-                       "These files typically contain only 'summary' or 'file-history-snapshot' "
-                       "entries and are not meant to be parsed as conversations.",
-                created_by=developer,
-            )
-
-    if skipped_files:
-        console.print(f"[dim]Skipped {len(skipped_files)} metadata-only file(s)[/dim]")
-        for skipped in skipped_files[:5]:  # Show first 5
-            console.print(f"  [dim]- {skipped.name} (no conversation messages)[/dim]")
-        if len(skipped_files) > 5:
-            console.print(f"  [dim]... and {len(skipped_files) - 5} more[/dim]")
-        console.print()
+    # Process all files (including metadata-only files)
+    files_to_process = all_files
 
     if not files_to_process:
-        console.print("[yellow]No conversational log files found to process[/yellow]")
+        console.print("[yellow]No log files found to process[/yellow]")
         raise typer.Exit(0)
 
-    console.print(f"Found {len(files_to_process)} conversational log(s) to process\n")
+    console.print(f"Found {len(files_to_process)} log(s) to process\n")
 
     # Process files
     successful = 0

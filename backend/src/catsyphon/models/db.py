@@ -38,6 +38,7 @@ class ConversationType(str, enum.Enum):
 
     MAIN = "main"  # Primary human conversation thread
     AGENT = "agent"  # Subagent/delegated task conversation
+    METADATA = "metadata"  # Session with only metadata entries (no messages)
     MCP = "mcp"  # MCP server conversation
     SKILL = "skill"  # Skill invocation conversation
     COMMAND = "command"  # Slash command conversation

@@ -190,10 +190,18 @@ class ClaudeCodeParser:
         # Build message thread and extract tool calls
         parsed_messages = self._build_message_thread(raw_messages)
 
+        # Check if this is a metadata-only file (has sessionId but no conversation messages)
+        is_metadata_only = len(parsed_messages) == 0
+
         # Calculate conversation timing
-        timestamps = [msg.timestamp for msg in parsed_messages if msg.timestamp]
-        start_time = min(timestamps) if timestamps else datetime.now()
-        end_time = max(timestamps) if timestamps else start_time
+        if is_metadata_only:
+            # For metadata-only files, use current time as placeholder
+            start_time = datetime.now()
+            end_time = start_time
+        else:
+            timestamps = [msg.timestamp for msg in parsed_messages if msg.timestamp]
+            start_time = min(timestamps) if timestamps else datetime.now()
+            end_time = max(timestamps) if timestamps else start_time
 
         # Extract code changes from tool calls
         all_tool_calls = []
@@ -203,7 +211,10 @@ class ClaudeCodeParser:
         code_changes = self._detect_code_changes(all_tool_calls)
 
         # Determine conversation type and hierarchy (Phase 2: Epic 7u2)
-        conversation_type = "agent" if is_sidechain else "main"
+        if is_metadata_only:
+            conversation_type = "metadata"  # No messages, only metadata entries
+        else:
+            conversation_type = "agent" if is_sidechain else "main"
 
         # For agent conversations, generate unique session_id and extract parent's session_id
         # Agent log files store the PARENT's session ID in the sessionId field,
