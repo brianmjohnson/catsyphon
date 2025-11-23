@@ -374,7 +374,7 @@ async def tag_conversation(
     )
 
     try:
-        tags = pipeline.tag_conversation(parsed)
+        tags, llm_metrics = pipeline.tag_conversation(parsed)
     except Exception as e:
         raise HTTPException(
             status_code=500,

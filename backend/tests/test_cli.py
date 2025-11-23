@@ -64,7 +64,7 @@ class TestIngestCommand:
             result = runner.invoke(app, ["ingest", temp_dir, "--dry-run"])
 
             assert result.exit_code == 0
-            assert "Found 1 file(s)" in result.stdout
+            assert "Found 1 conversational log(s)" in result.stdout
 
     def test_ingest_empty_directory(self):
         """Test ingesting an empty directory."""
@@ -139,8 +139,8 @@ class TestIngestCommand:
         try:
             result = runner.invoke(app, ["ingest", temp_path, "--dry-run"])
 
-            # Should fail gracefully
-            assert "Failed:" in result.stdout
+            # Invalid JSON is treated as skipped (metadata-only)
+            assert "Skipped" in result.stdout
         finally:
             Path(temp_path).unlink(missing_ok=True)
 

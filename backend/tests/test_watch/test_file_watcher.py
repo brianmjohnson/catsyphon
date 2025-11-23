@@ -362,7 +362,7 @@ class TestStatsTracking:
                 assert file_watcher.stats.last_activity is not None
 
     def test_increment_files_failed_on_errors(self, file_watcher, tmp_path):
-        """Test files_failed is incremented on processing errors."""
+        """Test files_skipped is incremented for metadata-only/malformed files."""
         test_file = tmp_path / "bad.jsonl"
         test_file.write_text("malformed content")
 
@@ -376,11 +376,11 @@ class TestStatsTracking:
             mock_db_session.return_value = mock_session
 
             with patch("catsyphon.watch.RawLogRepository", return_value=mock_repo):
-                # Parsing will fail due to malformed content
+                # Malformed content will be treated as metadata-only and skipped
                 file_watcher._process_file(test_file)
                 time.sleep(0.3)
 
-                assert file_watcher.stats.files_failed == 1
+                assert file_watcher.stats.files_skipped == 1
                 assert file_watcher.stats.last_activity is not None
 
 

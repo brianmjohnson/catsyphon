@@ -54,6 +54,7 @@ async def upload_conversation_logs(
     results: list[UploadResult] = []
     success_count = 0
     failed_count = 0
+    skipped_count = 0
 
     for uploaded_file in files:
         # Validate file extension
@@ -103,8 +104,8 @@ async def upload_conversation_logs(
                             error=skip_reason,
                         )
                     )
-                    # Note: skipped files are counted as success (not failed)
-                    success_count += 1
+                    # Note: skipped files are counted separately (not as success or failed)
+                    skipped_count += 1
                     # Clean up and continue to next file
                     temp_path.unlink(missing_ok=True)
                     continue
@@ -207,5 +208,6 @@ async def upload_conversation_logs(
     return UploadResponse(
         success_count=success_count,
         failed_count=failed_count,
+        skipped_count=skipped_count,
         results=results,
     )

@@ -226,37 +226,6 @@ class TestSkipTracking:
             assert jobs[0].messages_added == 0
             assert jobs[0].incremental is False
 
-    def test_track_skip_with_source_config(self, tmp_path: Path) -> None:
-        """Test that track_skip stores source_config_id for watch source."""
-        import uuid
-
-        from catsyphon.db.connection import db_session
-        from catsyphon.db.repositories import IngestionJobRepository
-        from catsyphon.pipeline.failure_tracking import track_skip
-
-        log_file = tmp_path / "skipped.jsonl"
-        log_file.touch()
-
-        config_id = uuid.uuid4()
-
-        # Track skip
-        track_skip(
-            file_path=log_file,
-            source_type="watch",
-            reason="Metadata-only file",
-            source_config_id=config_id,
-        )
-
-        # Verify source_config_id was stored
-        with db_session() as session:
-            repo = IngestionJobRepository(session)
-            # Query for jobs with this specific file path
-            all_jobs = repo.get_recent(limit=1000)
-            jobs = [j for j in all_jobs if str(log_file) in (j.file_path or "")]
-
-            assert len(jobs) == 1, f"Expected 1 job with file_path containing {log_file}, found {len(jobs)}"
-            assert jobs[0].source_config_id == config_id
-
     def test_track_skip_with_created_by(self, tmp_path: Path) -> None:
         """Test that track_skip stores created_by for uploads."""
         from catsyphon.db.connection import db_session

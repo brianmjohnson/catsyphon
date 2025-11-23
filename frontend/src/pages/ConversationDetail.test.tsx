@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { render } from '@/test/utils';
 import ConversationDetail from './ConversationDetail';
 import * as api from '@/lib/api';
@@ -340,10 +341,20 @@ describe('ConversationDetail', () => {
   });
 
   it('should display messages', async () => {
+    const user = userEvent.setup();
     vi.mocked(api.getConversation).mockResolvedValue(mockConversation);
 
     render(<ConversationDetail />);
 
+    // Wait for component to load
+    await waitFor(() => {
+      expect(screen.getByText('Conversation Detail')).toBeInTheDocument();
+    });
+
+    // Click on Messages tab (use getByRole to distinguish from message count text)
+    await user.click(screen.getByRole('button', { name: /messages/i }));
+
+    // Check that messages are displayed
     await waitFor(() => {
       expect(screen.getByText('Help me fix this bug')).toBeInTheDocument();
       expect(screen.getByText('I can help with that')).toBeInTheDocument();
@@ -351,10 +362,20 @@ describe('ConversationDetail', () => {
   });
 
   it('should display user and assistant roles', async () => {
+    const user = userEvent.setup();
     vi.mocked(api.getConversation).mockResolvedValue(mockConversation);
 
     render(<ConversationDetail />);
 
+    // Wait for component to load
+    await waitFor(() => {
+      expect(screen.getByText('Conversation Detail')).toBeInTheDocument();
+    });
+
+    // Click on Messages tab (use getByRole to distinguish from message count text)
+    await user.click(screen.getByRole('button', { name: /messages/i }));
+
+    // Check that message content is displayed
     await waitFor(() => {
       const allText = document.body.textContent || '';
       expect(allText).toContain('Help me fix this bug');

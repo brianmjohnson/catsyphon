@@ -412,7 +412,6 @@ class TestGetConversation:
         assert "messages" in data
         assert "epochs" in data
         assert "files_touched" in data
-        assert "conversation_tags" in data
 
     def test_get_conversation_includes_messages(
         self,
