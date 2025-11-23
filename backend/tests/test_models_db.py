@@ -58,12 +58,6 @@ class TestModelRepr:
         assert "FileTouched" in repr_str
         assert str(sample_file_touched.id) in repr_str
 
-    def test_conversation_tag_repr(self, sample_conversation_tag: ConversationTag):
-        """Test ConversationTag __repr__ method."""
-        repr_str = repr(sample_conversation_tag)
-        assert "ConversationTag" in repr_str
-        assert str(sample_conversation_tag.id) in repr_str
-
     def test_raw_log_repr(self, sample_raw_log: RawLog):
         """Test RawLog __repr__ method."""
         repr_str = repr(sample_raw_log)

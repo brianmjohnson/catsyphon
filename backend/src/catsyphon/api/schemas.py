@@ -321,6 +321,7 @@ class UploadResponse(BaseModel):
 
     success_count: int
     failed_count: int
+    skipped_count: int = 0
     results: list[UploadResult]
 
 

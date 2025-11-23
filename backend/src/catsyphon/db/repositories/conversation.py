@@ -18,6 +18,32 @@ class ConversationRepository(BaseRepository[Conversation]):
     def __init__(self, session: Session):
         super().__init__(Conversation, session)
 
+    def create(self, **kwargs) -> Conversation:
+        """
+        Create a new conversation.
+
+        If parent_conversation_id is provided, increments the parent's children_count.
+
+        Args:
+            **kwargs: Conversation field values
+
+        Returns:
+            Created conversation instance
+        """
+        # Create the conversation using parent method
+        conversation = super().create(**kwargs)
+
+        # Update parent's children_count if this is a child conversation
+        if kwargs.get("parent_conversation_id"):
+            parent_id = kwargs["parent_conversation_id"]
+            # Use ORM update instead of raw SQL to avoid SQLite UUID issues
+            parent = self.get(parent_id)
+            if parent:
+                parent.children_count = (parent.children_count or 0) + 1
+                self.session.flush()
+
+        return conversation
+
     def get_with_relations(
         self, id: uuid.UUID, workspace_id: uuid.UUID
     ) -> Optional[Conversation]:

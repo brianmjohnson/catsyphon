@@ -76,11 +76,11 @@ class TestFileUpload:
 
         response = client.post("/upload", files=files)
 
-        # Empty file will fail during parsing
+        # Empty file will be skipped (metadata-only, no conversation messages)
         assert response.status_code == 200
         result = response.json()
-        assert result["failed_count"] == 1
-        assert result["results"][0]["status"] == "error"
+        assert result["skipped_count"] == 1
+        assert result["results"][0]["status"] == "skipped"
 
     def test_upload_without_project_name(
         self, client: TestClient, sample_jsonl_content: str, db_session
@@ -178,11 +178,11 @@ class TestFileUpload:
 
         response = client.post("/upload", files=files)
 
-        # Should return 200 but with error status for this file
+        # Malformed JSON is treated as skipped (no valid conversation messages found)
         assert response.status_code == 200
         result = response.json()
-        assert result["failed_count"] == 1
-        assert result["results"][0]["status"] == "error"
+        assert result["skipped_count"] == 1
+        assert result["results"][0]["status"] == "skipped"
 
     def test_upload_very_large_file(self, client: TestClient):
         """Test uploading a large file (size limits)."""

@@ -693,7 +693,7 @@ def ingest_conversation(
                     text(
                         "UPDATE conversations SET children_count = children_count + 1 WHERE id = :parent_id"
                     ),
-                    {"parent_id": parent_conversation_id},
+                    {"parent_id": str(parent_conversation_id)},  # Convert UUID to string for SQLite
                 )
                 logger.debug(
                     f"Incremented children_count for parent {parent_conversation_id}"
@@ -1447,7 +1447,7 @@ def link_orphaned_agents(session: Session, workspace_id: UUID) -> int:
             text(
                 "UPDATE conversations SET children_count = children_count + 1 WHERE id = :parent_id"
             ),
-            {"parent_id": parent_conversation.id},
+            {"parent_id": str(parent_conversation.id)},  # Convert UUID to string for SQLite
         )
 
         logger.info(
