@@ -468,6 +468,34 @@ def ingest_conversation(
                         FileTouched.conversation_id == existing_conversation.id
                     ).delete()
 
+                    # Delete child conversations if this is a parent conversation
+                    # This prevents orphaned children when re-ingesting a file that now has fewer sub-agents
+                    if existing_conversation.parent_conversation_id is None:
+                        child_conversations = session.query(Conversation).filter(
+                            Conversation.parent_conversation_id == existing_conversation.id
+                        ).all()
+
+                        if child_conversations:
+                            logger.info(
+                                f"Deleting {len(child_conversations)} child conversations for re-ingest"
+                            )
+                            # Delete child's related data first (Messages, Epochs, FilesTouched)
+                            for child in child_conversations:
+                                session.query(Message).filter(
+                                    Message.conversation_id == child.id
+                                ).delete()
+                                session.query(Epoch).filter(
+                                    Epoch.conversation_id == child.id
+                                ).delete()
+                                session.query(FileTouched).filter(
+                                    FileTouched.conversation_id == child.id
+                                ).delete()
+                                # Delete the child conversation itself
+                                session.delete(child)
+
+                            # Reset children_count - it will be rebuilt when children are re-created
+                            existing_conversation.children_count = 0
+
                     session.flush()
 
                     # Update conversation fields with new data
