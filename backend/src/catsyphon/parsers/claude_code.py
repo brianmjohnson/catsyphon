@@ -7,6 +7,7 @@ the conversation timeline.
 """
 
 import json
+import difflib
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -663,6 +664,16 @@ class ClaudeCodeParser:
         """
         code_changes = []
 
+        def _diff_counts(old_text: str, new_text: str) -> tuple[int, int]:
+            """Return (added, deleted) line counts using ndiff."""
+            added = deleted = 0
+            for line in difflib.ndiff(old_text.splitlines(), new_text.splitlines()):
+                if line.startswith("+ "):
+                    added += 1
+                elif line.startswith("- "):
+                    deleted += 1
+            return added, deleted
+
         for tool_call in tool_calls:
             tool_name = tool_call.tool_name
 
@@ -673,12 +684,15 @@ class ClaudeCodeParser:
                 new_string = tool_call.parameters.get("new_string", "")
 
                 if file_path:
+                    added, deleted = _diff_counts(old_string or "", new_string or "")
                     code_changes.append(
                         CodeChange(
                             file_path=file_path,
                             change_type="edit",
                             old_content=old_string,
                             new_content=new_string,
+                            lines_added=added,
+                            lines_deleted=deleted,
                         )
                     )
 
@@ -688,12 +702,15 @@ class ClaudeCodeParser:
                 content = tool_call.parameters.get("content", "")
 
                 if file_path:
+                    added = len(content.splitlines()) if content else 0
                     code_changes.append(
                         CodeChange(
                             file_path=file_path,
                             change_type="create",
                             old_content=None,
                             new_content=content,
+                            lines_added=added,
+                            lines_deleted=0,
                         )
                     )
 
