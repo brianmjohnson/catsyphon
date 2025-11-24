@@ -21,6 +21,7 @@ import type {
   ProjectResponse,
   ProjectSession,
   ProjectStats,
+  ProjectAnalytics,
   UploadResponse,
   WatchConfigurationCreate,
   WatchConfigurationResponse,
@@ -373,6 +374,14 @@ export async function getProjectStats(
 ): Promise<ProjectStats> {
   const params = dateRange ? `?date_range=${dateRange}` : '';
   return apiFetch<ProjectStats>(`/projects/${projectId}/stats${params}`);
+}
+
+export async function getProjectAnalytics(
+  projectId: string,
+  dateRange?: '7d' | '30d' | '90d' | 'all'
+): Promise<ProjectAnalytics> {
+  const params = dateRange ? `?date_range=${dateRange}` : '';
+  return apiFetch<ProjectAnalytics>(`/projects/${projectId}/analytics${params}`);
 }
 
 export interface ProjectSessionFilters {

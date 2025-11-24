@@ -7,6 +7,7 @@ the conversation timeline.
 """
 
 import json
+import difflib
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -119,22 +120,20 @@ class ClaudeCodeParser:
         if not file_path.exists() or not file_path.is_file():
             return False
 
-        # Scan entire file to detect format
-        # Each JSONL message is independent - sessionId could appear anywhere
+        # Scan a small prefix to detect format
+        # Each JSONL message is independent - sessionId could appear early
         try:
-            with file_path.open("r", encoding="utf-8") as f:
-                for line in f:
+            with file_path.open("r", encoding="utf-8", errors="ignore") as f:
+                for idx, line in enumerate(f):
+                    if idx > 200:  # lightweight detection cap
+                        break
                     if not line.strip():
                         continue
 
                     try:
                         data = json.loads(line)
-                        # Look for Claude Code markers
-                        # Accept files with sessionId+version (normal conversations)
                         if "sessionId" in data and "version" in data:
                             return True
-                        # Also accept files with sessionId alone (metadata-only files)
-                        # or files with summary/file-history-snapshot entries
                         if "sessionId" in data:
                             return True
                         if data.get("type") in ("summary", "file-history-snapshot"):
@@ -665,6 +664,16 @@ class ClaudeCodeParser:
         """
         code_changes = []
 
+        def _diff_counts(old_text: str, new_text: str) -> tuple[int, int]:
+            """Return (added, deleted) line counts using ndiff."""
+            added = deleted = 0
+            for line in difflib.ndiff(old_text.splitlines(), new_text.splitlines()):
+                if line.startswith("+ "):
+                    added += 1
+                elif line.startswith("- "):
+                    deleted += 1
+            return added, deleted
+
         for tool_call in tool_calls:
             tool_name = tool_call.tool_name
 
@@ -675,12 +684,15 @@ class ClaudeCodeParser:
                 new_string = tool_call.parameters.get("new_string", "")
 
                 if file_path:
+                    added, deleted = _diff_counts(old_string or "", new_string or "")
                     code_changes.append(
                         CodeChange(
                             file_path=file_path,
                             change_type="edit",
                             old_content=old_string,
                             new_content=new_string,
+                            lines_added=added,
+                            lines_deleted=deleted,
                         )
                     )
 
@@ -690,12 +702,15 @@ class ClaudeCodeParser:
                 content = tool_call.parameters.get("content", "")
 
                 if file_path:
+                    added = len(content.splitlines()) if content else 0
                     code_changes.append(
                         CodeChange(
                             file_path=file_path,
                             change_type="create",
                             old_content=None,
                             new_content=content,
+                            lines_added=added,
+                            lines_deleted=0,
                         )
                     )
 
