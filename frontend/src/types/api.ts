@@ -370,6 +370,53 @@ export interface ProjectStats {
   sentiment_timeline: SentimentTimelinePoint[];
 }
 
+export interface PairingEffectivenessPair {
+  developer: string | null;
+  agent_type: string;
+  score: number;
+  success_rate: number | null;
+  lines_per_hour: number | null;
+  first_change_minutes: number | null;
+  sessions: number;
+}
+
+export interface RoleDynamicsSummary {
+  agent_led: number;
+  dev_led: number;
+  co_pilot: number;
+}
+
+export interface HandoffStats {
+  handoff_count: number;
+  avg_response_minutes: number | null;
+  success_rate: number | null;
+  clarifications_avg: number | null;
+}
+
+export interface ImpactMetrics {
+  avg_lines_per_hour: number | null;
+  median_first_change_minutes: number | null;
+  total_lines_changed: number;
+  sessions_measured: number;
+}
+
+export interface SentimentByAgent {
+  agent_type: string;
+  avg_sentiment: number | null;
+  sessions: number;
+}
+
+export interface ProjectAnalytics {
+  project_id: string;
+  date_range?: string | null;
+  pairing_top: PairingEffectivenessPair[];
+  pairing_bottom: PairingEffectivenessPair[];
+  role_dynamics: RoleDynamicsSummary;
+  handoffs: HandoffStats;
+  impact: ImpactMetrics;
+  sentiment_by_agent: SentimentByAgent[];
+}
+
 export interface ProjectSession {
   id: string;
   start_time: string;

@@ -47,6 +47,65 @@ class SentimentTimelinePoint(BaseModel):
     session_count: int  # Number of sessions on this date
 
 
+class PairingEffectivenessPair(BaseModel):
+    """Pair-level effectiveness metrics."""
+
+    developer: Optional[str]
+    agent_type: str
+    score: float
+    success_rate: Optional[float] = None
+    lines_per_hour: Optional[float] = None
+    first_change_minutes: Optional[float] = None
+    sessions: int
+
+
+class RoleDynamicsSummary(BaseModel):
+    """Aggregate role balance across sessions."""
+
+    agent_led: int = 0
+    dev_led: int = 0
+    co_pilot: int = 0
+
+
+class HandoffStats(BaseModel):
+    """Metrics for parent→agent handoffs."""
+
+    handoff_count: int = 0
+    avg_response_minutes: Optional[float] = None
+    success_rate: Optional[float] = None
+    clarifications_avg: Optional[float] = None
+
+
+class ImpactMetrics(BaseModel):
+    """Impact and latency metrics."""
+
+    avg_lines_per_hour: Optional[float] = None
+    median_first_change_minutes: Optional[float] = None
+    total_lines_changed: int = 0
+    sessions_measured: int = 0
+
+
+class SentimentByAgent(BaseModel):
+    """Sentiment rollup per agent type."""
+
+    agent_type: str
+    avg_sentiment: Optional[float] = None
+    sessions: int = 0
+
+
+class ProjectAnalytics(BaseModel):
+    """Advanced analytics for a project."""
+
+    project_id: UUID
+    date_range: Optional[str] = None
+    pairing_top: list[PairingEffectivenessPair] = Field(default_factory=list)
+    pairing_bottom: list[PairingEffectivenessPair] = Field(default_factory=list)
+    role_dynamics: RoleDynamicsSummary = RoleDynamicsSummary()
+    handoffs: HandoffStats = HandoffStats()
+    impact: ImpactMetrics = ImpactMetrics()
+    sentiment_by_agent: list[SentimentByAgent] = Field(default_factory=list)
+
+
 class ProjectStats(BaseModel):
     """Statistics for a single project."""
 

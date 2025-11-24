@@ -5,7 +5,7 @@ Endpoints for project-level statistics, sessions, and file aggregations.
 """
 
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,13 +14,23 @@ from sqlalchemy.orm import Session
 
 from catsyphon.api.schemas import (
     ProjectFileAggregation,
+    ProjectAnalytics,
     ProjectSession,
     ProjectStats,
     SentimentTimelinePoint,
+    SentimentByAgent,
+    PairingEffectivenessPair,
+    RoleDynamicsSummary,
+    HandoffStats,
+    ImpactMetrics,
 )
 from catsyphon.db.connection import get_db
-from catsyphon.db.repositories import ConversationRepository, ProjectRepository, WorkspaceRepository
-from catsyphon.models.db import Conversation, Developer, Epoch, FileTouched, Message
+from catsyphon.db.repositories import (
+    ConversationRepository,
+    ProjectRepository,
+    WorkspaceRepository,
+)
+from catsyphon.models.db import Conversation, Developer, FileTouched, Message
 
 router = APIRouter()
 
@@ -42,6 +52,16 @@ def _get_default_workspace_id(session: Session) -> Optional[UUID]:
         return None
 
     return workspaces[0].id
+
+
+def _classify_role_dynamics(
+    assistant_ratio: float, assistant_tool_calls: int, user_tool_calls: int
+) -> str:
+    if assistant_ratio >= 0.6 or assistant_tool_calls > user_tool_calls:
+        return "agent_led"
+    if assistant_ratio <= 0.4:
+        return "dev_led"
+    return "co_pilot"
 
 
 @router.get("/{project_id}/stats", response_model=ProjectStats)
@@ -241,6 +261,260 @@ async def get_project_stats(
         developer_count=len(developer_ids),
         developers=developer_names,
         sentiment_timeline=sentiment_timeline,
+    )
+
+
+@router.get("/{project_id}/analytics", response_model=ProjectAnalytics)
+async def get_project_analytics(
+    project_id: UUID,
+    session: Session = Depends(get_db),
+    date_range: Optional[str] = Query(
+        None, description="Date range filter: 7d, 30d, 90d, or all (default: all)"
+    ),
+) -> ProjectAnalytics:
+    """
+    Advanced analytics for a project focused on pairing effectiveness and handoffs.
+    """
+    from datetime import datetime, timedelta
+    import statistics
+
+    project_repo = ProjectRepository(session)
+    project = project_repo.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Calculate date cutoff
+    cutoff_date = None
+    if date_range:
+        now = datetime.now()
+        if date_range == "7d":
+            cutoff_date = now - timedelta(days=7)
+        elif date_range == "30d":
+            cutoff_date = now - timedelta(days=30)
+        elif date_range == "90d":
+            cutoff_date = now - timedelta(days=90)
+
+    conv_query = session.query(Conversation).filter(Conversation.project_id == project_id)
+    if cutoff_date:
+        conv_query = conv_query.filter(Conversation.start_time >= cutoff_date)
+    conversations = conv_query.all()
+
+    if not conversations:
+        return ProjectAnalytics(project_id=project_id, date_range=date_range)
+
+    conv_ids = [c.id for c in conversations]
+
+    # Developers lookup
+    dev_ids = {c.developer_id for c in conversations if c.developer_id}
+    dev_map = {
+        d.id: d.username
+        for d in session.query(Developer).filter(Developer.id.in_(dev_ids)).all()
+    } if dev_ids else {}
+
+    # Messages and files
+    messages = (
+        session.query(Message)
+        .filter(Message.conversation_id.in_(conv_ids))
+        .all()
+    )
+    msgs_by_conv: dict[UUID, list[Message]] = {}
+    for m in messages:
+        msgs_by_conv.setdefault(m.conversation_id, []).append(m)
+
+    files = (
+        session.query(FileTouched)
+        .filter(FileTouched.conversation_id.in_(conv_ids))
+        .all()
+    )
+    files_by_conv: dict[UUID, list[FileTouched]] = {}
+    for f in files:
+        files_by_conv.setdefault(f.conversation_id, []).append(f)
+
+    # Pairing effectiveness aggregation
+    pair_buckets: dict[tuple[Optional[UUID], str], dict[str, Any]] = {}
+    role_counts = {"agent_led": 0, "dev_led": 0, "co_pilot": 0}
+    handoff_latencies: list[float] = []
+    handoff_successes = 0
+    handoff_clarifications: list[int] = []
+    impact_lines_total = 0
+    impact_sessions = 0
+    first_change_latencies: list[float] = []
+
+    conversation_lookup = {c.id: c for c in conversations}
+
+    for conv in conversations:
+        key = (conv.developer_id, conv.agent_type)
+        bucket = pair_buckets.setdefault(
+            key,
+            {
+                "sessions": 0,
+                "successes": 0,
+                "lines": 0,
+                "duration_hours": 0.0,
+                "first_change_minutes_total": 0.0,
+                "first_change_count": 0,
+            },
+        )
+        bucket["sessions"] += 1
+        if conv.success is True:
+            bucket["successes"] += 1
+
+        # Duration
+        duration_hours = 0.0
+        if conv.start_time and conv.end_time:
+            duration_hours = max(
+                (conv.end_time - conv.start_time).total_seconds() / 3600.0, 0.0001
+            )
+            bucket["duration_hours"] += duration_hours
+
+        # Lines and first-change latency
+        conv_files = files_by_conv.get(conv.id, [])
+        lines_changed = sum((f.lines_added or 0) + (f.lines_deleted or 0) for f in conv_files)
+        impact_lines_total += lines_changed
+        if lines_changed > 0:
+            impact_sessions += 1
+        bucket["lines"] += lines_changed
+
+        if conv_files:
+            first_change_ts = min(f.timestamp for f in conv_files if f.timestamp)
+            if first_change_ts and conv.start_time:
+                latency_minutes = max(
+                    (first_change_ts - conv.start_time).total_seconds() / 60.0, 0.0
+                )
+                bucket["first_change_minutes_total"] += latency_minutes
+                bucket["first_change_count"] += 1
+                first_change_latencies.append(latency_minutes)
+
+        # Role dynamics
+        conv_msgs = msgs_by_conv.get(conv.id, [])
+        assistant_msgs = sum(1 for m in conv_msgs if m.role == "assistant")
+        user_msgs = sum(1 for m in conv_msgs if m.role == "user")
+        total_msgs = assistant_msgs + user_msgs
+        assistant_tool_calls = sum(1 for m in conv_msgs if m.role == "assistant" and m.tool_calls)
+        user_tool_calls = sum(1 for m in conv_msgs if m.role == "user" and m.tool_calls)
+        assistant_ratio = assistant_msgs / total_msgs if total_msgs else 0.5
+        role = _classify_role_dynamics(assistant_ratio, assistant_tool_calls, user_tool_calls)
+        role_counts[role] += 1
+
+        # Handoff stats
+        if conv.parent_conversation_id:
+            parent = conversation_lookup.get(conv.parent_conversation_id)
+            if parent and parent.start_time and conv.start_time:
+                delta_minutes = max(
+                    (conv.start_time - parent.start_time).total_seconds() / 60.0, 0.0
+                )
+                handoff_latencies.append(delta_minutes)
+                if conv.success is True:
+                    handoff_successes += 1
+                # Clarifications: user messages in parent between parent start and agent start
+                parent_msgs = msgs_by_conv.get(parent.id, [])
+                clarifications = sum(
+                    1
+                    for m in parent_msgs
+                    if m.role == "user"
+                    and m.timestamp >= parent.start_time
+                    and m.timestamp <= conv.start_time
+                )
+                handoff_clarifications.append(clarifications)
+
+    # Build pairing pairs
+    pairs: list[PairingEffectivenessPair] = []
+    for (dev_id, agent_type), data in pair_buckets.items():
+        sessions = data["sessions"]
+        success_rate = data["successes"] / sessions if sessions else None
+        lines_per_hour = (
+            data["lines"] / data["duration_hours"] if data["duration_hours"] > 0 else None
+        )
+        avg_first_change = (
+            data["first_change_minutes_total"] / data["first_change_count"]
+            if data["first_change_count"] > 0
+            else None
+        )
+        throughput_component = min(lines_per_hour / 200.0, 1.0) if lines_per_hour else 0.0
+        latency_component = (
+            max(0.0, 1 - (avg_first_change / 60.0)) if avg_first_change is not None else 0.5
+        )
+        score = (success_rate or 0.5) * 0.6 + throughput_component * 0.3 + latency_component * 0.1
+
+        pairs.append(
+            PairingEffectivenessPair(
+                developer=dev_map.get(dev_id),
+                agent_type=agent_type,
+                score=round(score, 3),
+                success_rate=success_rate,
+                lines_per_hour=lines_per_hour,
+                first_change_minutes=avg_first_change,
+                sessions=sessions,
+            )
+        )
+
+    pairing_top = sorted(pairs, key=lambda p: p.score, reverse=True)[:5]
+    pairing_bottom = sorted(pairs, key=lambda p: p.score)[:5]
+
+    # Handoff stats aggregate
+    handoff_count = len(handoff_latencies)
+    handoff_avg = sum(handoff_latencies) / handoff_count if handoff_count else None
+    handoff_success_rate = (
+        handoff_successes / handoff_count if handoff_count else None
+    )
+    clarifications_avg = (
+        sum(handoff_clarifications) / len(handoff_clarifications)
+        if handoff_clarifications
+        else None
+    )
+
+    # Impact metrics
+    impact_avg_lines = (
+        impact_lines_total / impact_sessions if impact_sessions > 0 else None
+    )
+    median_first_change = (
+        statistics.median(first_change_latencies) if first_change_latencies else None
+    )
+
+    # Sentiment by agent
+    sentiment_rollup: dict[str, list[float]] = {}
+    for conv in conversations:
+        sentiment = conv.tags.get("sentiment_score") if isinstance(conv.tags, dict) else None
+        if sentiment is None:
+            # Fallback: map sentiment label to score
+            label = conv.tags.get("sentiment") if isinstance(conv.tags, dict) else None
+            if label == "positive":
+                sentiment = 0.6
+            elif label == "negative":
+                sentiment = -0.6
+            elif label == "neutral":
+                sentiment = 0.0
+        if sentiment is not None:
+            sentiment_rollup.setdefault(conv.agent_type, []).append(float(sentiment))
+
+    sentiment_by_agent = [
+        SentimentByAgent(
+            agent_type=agent,
+            avg_sentiment=sum(scores) / len(scores) if scores else None,
+            sessions=len(scores),
+        )
+        for agent, scores in sentiment_rollup.items()
+    ]
+
+    return ProjectAnalytics(
+        project_id=project_id,
+        date_range=date_range,
+        pairing_top=pairing_top,
+        pairing_bottom=pairing_bottom,
+        role_dynamics=RoleDynamicsSummary(**role_counts),
+        handoffs=HandoffStats(
+            handoff_count=handoff_count,
+            avg_response_minutes=handoff_avg,
+            success_rate=handoff_success_rate,
+            clarifications_avg=clarifications_avg,
+        ),
+        impact=ImpactMetrics(
+            avg_lines_per_hour=impact_avg_lines,
+            median_first_change_minutes=median_first_change,
+            total_lines_changed=impact_lines_total,
+            sessions_measured=impact_sessions,
+        ),
+        sentiment_by_agent=sentiment_by_agent,
     )
 
 
