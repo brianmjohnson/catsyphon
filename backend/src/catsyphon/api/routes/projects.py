@@ -37,6 +37,7 @@ from catsyphon.models.db import (
     Developer,
     FileTouched,
     Message,
+    Epoch,
     IngestionJob,
 )
 
