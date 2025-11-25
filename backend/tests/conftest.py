@@ -5,6 +5,24 @@ This module provides shared fixtures for testing database models, repositories,
 and other components.
 """
 
+import os
+from pathlib import Path
+import tempfile
+
+# Force SQLite for tests so helpers that rely on the default db_session don't try to
+# reach a Postgres instance (e.g., failure tracking, daemon manager).
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ.setdefault(
+    "TAGGING_CACHE_DIR",
+    str(Path(tempfile.gettempdir()) / "catsyphon-tags"),
+)
+
+# Reload database connection module to pick up the override early
+import importlib
+import catsyphon.db.connection as db_connection  # type: ignore
+
+importlib.reload(db_connection)
+
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Generator
@@ -122,6 +140,30 @@ def api_client(db_session: Session):
 
     # Clean up
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def override_fastapi_db(db_session: Session):
+    """
+    Autouse fixture to ensure all FastAPI TestClients use the in-memory SQLite session.
+
+    This prevents accidental connections to Postgres when tests construct their own
+    TestClient fixtures.
+    """
+    from catsyphon.api.app import app
+    from catsyphon.db.connection import get_db
+
+    def override_get_db():
+        try:
+            yield db_session
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture

@@ -269,6 +269,7 @@ export interface IngestionJobResponse {
   processing_time_ms: number | null;
   incremental: boolean;
   messages_added: number;
+  ingest_mode?: string | null;
   started_at: string;
   completed_at: string | null;
   created_by: string | null;

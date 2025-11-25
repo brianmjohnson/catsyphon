@@ -13,13 +13,34 @@ from sqlalchemy.orm import Session, sessionmaker
 from catsyphon.config import settings
 
 # Create engine instance (singleton pattern)
-engine = create_engine(
-    settings.database_url,
-    echo=settings.environment == "development",  # SQL logging in dev
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,  # Verify connections before using
-)
+if settings.database_url.startswith("sqlite"):
+    from sqlalchemy import JSON, event
+    from sqlalchemy.dialects import postgresql
+
+    engine = create_engine(
+        settings.database_url,
+        echo=settings.environment == "development",
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
+    )
+
+    from catsyphon.models.db import Base
+
+    # Replace JSONB with JSON for SQLite compatibility
+    @event.listens_for(Base.metadata, "before_create")
+    def _set_json_type(target, connection, **kw):  # pragma: no cover - compat hook
+        for table in target.tables.values():
+            for column in table.columns:
+                if isinstance(column.type, postgresql.JSONB):
+                    column.type = JSON()
+else:
+    engine = create_engine(
+        settings.database_url,
+        echo=settings.environment == "development",  # SQL logging in dev
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,  # Verify connections before using
+    )
 
 # Create session factory
 SessionLocal = sessionmaker(
@@ -27,6 +48,10 @@ SessionLocal = sessionmaker(
     autoflush=False,
     bind=engine,
 )
+
+# Ensure tables exist for SQLite test runs (in-memory databases don't persist schema)
+if settings.database_url.startswith("sqlite"):
+    Base.metadata.create_all(bind=engine)
 
 
 def get_session() -> Session:

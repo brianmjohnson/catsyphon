@@ -136,6 +136,13 @@ async def get_ingestion_stats(
         total_llm_cost_usd=stats["total_llm_cost_usd"],  # type: ignore
         llm_cache_hit_rate=stats["llm_cache_hit_rate"],  # type: ignore
         error_rates_by_stage=stats["error_rates_by_stage"],  # type: ignore
+        # Parser/change-type aggregates
+        parser_usage=stats["parser_usage"],  # type: ignore
+        parser_version_usage=stats["parser_version_usage"],  # type: ignore
+        parse_methods=stats["parse_methods"],  # type: ignore
+        parse_change_types=stats["parse_change_types"],  # type: ignore
+        avg_parse_warning_count=stats["avg_parse_warning_count"],  # type: ignore
+        parse_warning_rate=stats["parse_warning_rate"],  # type: ignore
     )
 
 

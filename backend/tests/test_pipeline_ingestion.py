@@ -10,6 +10,7 @@ from catsyphon.db.repositories import (
     ConversationRepository,
     DeveloperRepository,
     EpochRepository,
+    IngestionJobRepository,
     MessageRepository,
     ProjectRepository,
     RawLogRepository,
@@ -22,6 +23,7 @@ from catsyphon.models.parsed import (
     ToolCall,
 )
 from catsyphon.pipeline.ingestion import ingest_conversation, link_orphaned_agents
+from catsyphon.parsers.types import ParseResult
 
 
 class TestBasicIngestion:
@@ -121,6 +123,52 @@ class TestBasicIngestion:
         all_projects = project_repo.get_all()
         project_names = [p.name for p in all_projects]
         assert project_names.count("existing-project") == 1
+
+    def test_ingest_records_parser_metadata(self, db_session: Session):
+        """Ingestion stores parser metadata and warnings in job metrics."""
+        parsed = ParsedConversation(
+            agent_type="claude-code",
+            agent_version="2.0.17",
+            start_time=datetime.now(UTC),
+            end_time=None,
+            messages=[
+                ParsedMessage(
+                    role="user",
+                    content="Test",
+                    timestamp=datetime.now(UTC),
+                )
+            ],
+            session_id="parser-metadata-session",
+        )
+
+        parse_result = ParseResult(
+            conversation=parsed,
+            parser_name="test-parser",
+            parser_version="1.2.3",
+            parse_method="full",
+            change_type="rewrite",
+            metrics={"parse_runtime_ms": 12},
+            warnings=["minor warning"],
+        )
+
+        conversation = ingest_conversation(
+            db_session,
+            parsed,
+            parse_result=parse_result,
+            parse_metrics={"parse_duration_ms": 5},
+        )
+
+        job_repo = IngestionJobRepository(db_session)
+        jobs = job_repo.get_by_conversation(conversation.id)
+
+        assert jobs
+        metrics = jobs[0].metrics
+        assert metrics["parser_name"] == "test-parser"
+        assert metrics["parser_version"] == "1.2.3"
+        assert metrics["parse_method"] == "full"
+        assert metrics["parse_change_type"] == "rewrite"
+        assert metrics["parse_warning_count"] == 1
+        assert "parse_duration_ms" in metrics
 
     def test_ingest_with_developer(self, db_session: Session, sample_workspace):
         """Test ingestion creates/gets developer."""
@@ -609,7 +657,7 @@ class TestConversationUpdates:
     """Tests for conversation update modes (skip, replace, append)."""
 
     def test_update_mode_skip(self, db_session: Session):
-        """Test that skip mode returns existing conversation without changes."""
+        """Skip mode now behaves like replace to ensure new content ingests."""
         session_id = "test-session-skip"
         now = datetime.now(UTC)
 
@@ -652,10 +700,10 @@ class TestConversationUpdates:
 
         conv2 = ingest_conversation(db_session, parsed2, update_mode="skip")
 
-        # Should return same conversation
+        # Should reuse the same conversation record but replace content
         assert conv2.id == original_id
-        assert len(conv2.messages) == original_message_count
-        assert conv2.messages[0].content == "Original message"
+        assert len(conv2.messages) == 1
+        assert conv2.messages[0].content == "New message"
 
     def test_update_mode_replace(self, db_session: Session):
         """Test that replace mode deletes children and recreates with new data."""

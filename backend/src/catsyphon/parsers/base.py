@@ -70,6 +70,9 @@ class ConversationParser(Protocol):
         """
         ...
 
+    # Optional: parsers may expose a richer probe signature:
+    # def probe(self, file_path: Path) -> "ProbeResult": ...
+
     def parse(self, file_path: Path) -> ParsedConversation:
         """
         Parse a conversation log file into structured format.

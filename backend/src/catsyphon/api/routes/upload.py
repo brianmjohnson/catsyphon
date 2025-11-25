@@ -5,22 +5,18 @@ Endpoints for uploading and ingesting conversation log files.
 """
 
 import tempfile
-import time
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy.orm import Session
 
 from catsyphon.api.schemas import UploadResponse, UploadResult
-from catsyphon.db.connection import db_session
+from catsyphon.db.connection import get_db
 from catsyphon.exceptions import DuplicateFileError
 from catsyphon.parsers import get_default_registry
 from catsyphon.parsers.utils import is_conversational_log
 from catsyphon.pipeline.failure_tracking import track_skip
-from catsyphon.pipeline.ingestion import (
-    ingest_conversation,
-    link_orphaned_agents,
-    _get_or_create_default_workspace,
-)
+from catsyphon.pipeline.ingestion import link_orphaned_agents, _get_or_create_default_workspace
 
 router = APIRouter()
 
@@ -33,6 +29,7 @@ async def upload_conversation_logs(
         description="How to handle existing conversations: 'skip' (default), 'replace', or 'append'",
         regex="^(skip|replace|append)$",
     ),
+    session: Session = Depends(get_db),
 ) -> UploadResponse:
     """
     Upload and ingest one or more conversation log files.
@@ -82,52 +79,76 @@ async def upload_conversation_logs(
 
             try:
 
-                # Parse the file with timing
-                parse_start_ms = time.time() * 1000
-                conversation = registry.parse(temp_path)
-                parse_duration_ms = (time.time() * 1000) - parse_start_ms
-
-                # Build parse metrics
-                parse_metrics = {
-                    "parse_duration_ms": parse_duration_ms,
-                    "parse_method": "full",
-                    "parse_messages_count": len(conversation.messages),
-                }
-
                 # Store to database with specified update_mode
                 try:
-                    with db_session() as session:
-                        db_conversation = ingest_conversation(
-                            session=session,
-                            parsed=conversation,
-                            project_name=None,  # Auto-extract from log
-                            developer_username=None,  # Auto-extract from log
-                            file_path=temp_path,  # Pass temp path for hash calculation
-                            skip_duplicates=True,  # Always skip file hash duplicates in API
-                            update_mode=update_mode,  # Use provided update mode
-                            parse_metrics=parse_metrics,
-                        )
-                        session.commit()
+                    from catsyphon.pipeline.orchestrator import ingest_log_file
 
-                        # Refresh to load relationships from database
-                        session.refresh(db_conversation)
+                    outcome = ingest_log_file(
+                        session=session,
+                        file_path=temp_path,
+                        registry=registry,
+                        project_name=None,  # Auto-extract from log
+                        developer_username=None,  # Auto-extract from log
+                        tags=None,
+                        skip_duplicates=True,  # Always skip file hash duplicates in API
+                        update_mode=update_mode,  # Use provided update mode
+                        source_type="upload",
+                        source_config_id=None,
+                        created_by=None,
+                        enable_incremental=True,
+                    )
+                    session.commit()
 
-                        # Count related records from database object
-                        message_count = len(conversation.messages)  # Use parsed count
-                        epoch_count = len(db_conversation.epochs)
-                        files_count = len(db_conversation.files_touched)
+                    db_conversation = outcome.conversation
+                    status_label = outcome.status or "success"
 
+                    if status_label == "duplicate":
                         results.append(
                             UploadResult(
                                 filename=uploaded_file.filename,
-                                status="success",
-                                conversation_id=db_conversation.id,
-                                message_count=message_count,
-                                epoch_count=epoch_count,
-                                files_count=files_count,
+                                status="duplicate",
+                                conversation_id=db_conversation.id if db_conversation else None,
+                                message_count=db_conversation.message_count if db_conversation else None,
+                                epoch_count=len(db_conversation.epochs) if db_conversation else None,
+                                files_count=len(db_conversation.files_touched) if db_conversation else None,
                             )
                         )
-                        success_count += 1
+                        success_count += 1  # Duplicates are not treated as errors
+                        continue
+
+                    if status_label == "skipped":
+                        results.append(
+                            UploadResult(
+                                filename=uploaded_file.filename,
+                                status="skipped",
+                                error="File unchanged or skipped",
+                            )
+                        )
+                        skipped_count += 1
+                        continue
+
+                    if not db_conversation:
+                        raise ValueError("Ingestion returned no conversation")
+
+                    # Refresh to load relationships from database
+                    session.refresh(db_conversation)
+
+                    # Count related records from database object
+                    message_count = db_conversation.message_count
+                    epoch_count = len(db_conversation.epochs)
+                    files_count = len(db_conversation.files_touched)
+
+                    results.append(
+                        UploadResult(
+                            filename=uploaded_file.filename,
+                            status="success",
+                            conversation_id=db_conversation.id,
+                            message_count=message_count,
+                            epoch_count=epoch_count,
+                            files_count=files_count,
+                        )
+                    )
+                    success_count += 1
 
                 except DuplicateFileError:
                     # File is a duplicate, return status="duplicate"
@@ -139,6 +160,18 @@ async def upload_conversation_logs(
                         )
                     )
                     success_count += 1  # Count duplicates as successful (not an error)
+                except Exception as parse_or_ingest_error:
+                    # Treat parse errors as skipped to align with API contract
+                    results.append(
+                        UploadResult(
+                            filename=uploaded_file.filename,
+                            status="skipped",
+                            error=str(parse_or_ingest_error),
+                        )
+                    )
+                    skipped_count += 1
+                    # Rollback any partial transaction
+                    session.rollback()
 
             finally:
                 # Clean up temporary file

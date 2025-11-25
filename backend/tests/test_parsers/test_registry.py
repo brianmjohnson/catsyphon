@@ -11,6 +11,7 @@ from catsyphon.parsers.base import ParseFormatError
 from catsyphon.parsers.claude_code import ClaudeCodeParser
 from catsyphon.parsers.incremental import IncrementalParser
 from catsyphon.parsers.registry import ParserRegistry, get_default_registry
+from catsyphon.parsers.types import ParseResult
 
 # Get the fixtures directory
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -99,6 +100,19 @@ class TestParserRegistry:
 
         with pytest.raises(ParseFormatError, match="No parser could handle"):
             registry.parse(log_file)
+
+    def test_parse_with_metadata_returns_parse_result(self):
+        """Test parse_with_metadata returns ParseResult with parser info."""
+        registry = ParserRegistry()
+        registry.register(ClaudeCodeParser())
+
+        log_file = FIXTURES_DIR / "minimal_conversation.jsonl"
+        result = registry.parse_with_metadata(log_file)
+
+        assert isinstance(result, ParseResult)
+        assert result.conversation.agent_type == "claude-code"
+        assert result.parser_name == "claude-code"
+        assert result.parse_method == "full"
 
 
 class TestIncrementalParserFinding:
