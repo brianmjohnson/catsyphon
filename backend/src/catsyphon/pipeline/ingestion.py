@@ -83,6 +83,80 @@ def _find_parent_task_message(
     return None
 
 
+def _resolve_project_and_developer(
+    session: Session,
+    workspace_id: UUID,
+    working_directory: Optional[str],
+    project_name: Optional[str] = None,
+    developer_username: Optional[str] = None,
+) -> tuple[Optional[UUID], Optional[UUID]]:
+    """Resolve project and developer IDs from parsed data.
+
+    This helper extracts the logic for determining project and developer
+    associations from a conversation's working_directory and optional
+    explicit names.
+
+    Args:
+        session: Database session
+        workspace_id: Workspace UUID
+        working_directory: Optional working directory path from parsed conversation
+        project_name: Optional explicit project name (overrides auto-detection)
+        developer_username: Optional explicit developer username (overrides auto-detection)
+
+    Returns:
+        Tuple of (project_id, developer_id), either or both may be None
+    """
+    project_repo = ProjectRepository(session)
+    developer_repo = DeveloperRepository(session)
+
+    # Step 1: Get or create Project
+    # Auto-detect from working_directory or use manual project_name
+    project_id = None
+    if project_name:
+        # Manual override: use project_name as display name
+        # If working_directory is available, use it as directory_path
+        if working_directory:
+            project = project_repo.get_or_create_by_directory(
+                directory_path=working_directory,
+                workspace_id=workspace_id,
+                name=project_name,  # Override auto-generated name
+            )
+        else:
+            # Fallback to old behavior if no working_directory
+            project = project_repo.get_or_create_by_name(project_name, workspace_id)
+        project_id = project.id
+        logger.debug(f"Project: {project.name} ({project.id})")
+    elif working_directory:
+        # Auto-detect project from working_directory
+        project = project_repo.get_or_create_by_directory(
+            directory_path=working_directory, workspace_id=workspace_id
+        )
+        project_id = project.id
+        logger.debug(
+            f"Auto-detected project: {project.name} from {working_directory}"
+        )
+    else:
+        logger.warning(
+            "No project association: working_directory not found and project_name not provided"
+        )
+
+    # Step 2: Get or create Developer
+    developer_id = None
+    # Auto-extract username from working_directory if not explicitly provided
+    effective_username = developer_username or _extract_username_from_path(
+        working_directory
+    )
+    if effective_username:
+        developer = developer_repo.get_or_create_by_username(
+            effective_username, workspace_id
+        )
+        developer_id = developer.id
+        source = "explicit" if developer_username else "auto-extracted from path"
+        logger.debug(f"Developer: {developer.username} ({developer.id}) [{source}]")
+
+    return project_id, developer_id
+
+
 class StageMetrics:
     """Helper for tracking pipeline stage timings."""
 
@@ -715,57 +789,19 @@ def ingest_conversation(
                         return updated_conversation
 
         # Initialize remaining repositories
-        project_repo = ProjectRepository(session)
-        developer_repo = DeveloperRepository(session)
         conversation_repo = ConversationRepository(session)
         epoch_repo = EpochRepository(session)
         message_repo = MessageRepository(session)
         raw_log_repo = RawLogRepository(session)
 
-        # Step 1: Get or create Project
-        # Auto-detect from working_directory or use manual project_name
-        project_id = None
-        if project_name:
-            # Manual override: use project_name as display name
-            # If working_directory is available, use it as directory_path
-            if parsed.working_directory:
-                project = project_repo.get_or_create_by_directory(
-                    directory_path=parsed.working_directory,
-                    workspace_id=workspace_id,
-                    name=project_name,  # Override auto-generated name
-                )
-            else:
-                # Fallback to old behavior if no working_directory
-                project = project_repo.get_or_create_by_name(project_name, workspace_id)
-            project_id = project.id
-            logger.debug(f"Project: {project.name} ({project.id})")
-        elif parsed.working_directory:
-            # Auto-detect project from working_directory
-            project = project_repo.get_or_create_by_directory(
-                directory_path=parsed.working_directory, workspace_id=workspace_id
-            )
-            project_id = project.id
-            logger.debug(
-                f"Auto-detected project: {project.name} from {parsed.working_directory}"
-            )
-        else:
-            logger.warning(
-                "No project association: working_directory not found and --project not provided"
-            )
-
-        # Step 2: Get or create Developer
-        developer_id = None
-        # Auto-extract username from working_directory if not explicitly provided
-        effective_username = developer_username or _extract_username_from_path(
-            parsed.working_directory
+        # Step 1 & 2: Resolve project and developer associations
+        project_id, developer_id = _resolve_project_and_developer(
+            session=session,
+            workspace_id=workspace_id,
+            working_directory=parsed.working_directory,
+            project_name=project_name,
+            developer_username=developer_username,
         )
-        if effective_username:
-            developer = developer_repo.get_or_create_by_username(
-                effective_username, workspace_id
-            )
-            developer_id = developer.id
-            source = "explicit" if developer_username else "auto-extracted from path"
-            logger.debug(f"Developer: {developer.username} ({developer.id}) [{source}]")
 
         # Step 3: Hierarchical conversation linking (Phase 2: Epic 7u2)
         # If this is an agent/subagent conversation, find the parent conversation
@@ -1114,6 +1150,25 @@ def _append_messages_incremental(
         return existing_conversation
 
     logger.info(f"Appending {len(new_messages)} new messages")
+
+    # Update project/developer associations if they were missing during initial ingest
+    # This can happen if working_directory wasn't available initially
+    if (
+        existing_conversation.project_id is None
+        or existing_conversation.developer_id is None
+    ):
+        project_id, developer_id = _resolve_project_and_developer(
+            session=session,
+            workspace_id=existing_conversation.workspace_id,
+            working_directory=parsed.working_directory,
+            # No explicit names in append mode - use auto-detection only
+        )
+        if existing_conversation.project_id is None and project_id is not None:
+            existing_conversation.project_id = project_id
+            logger.info(f"Updated project association during append: {project_id}")
+        if existing_conversation.developer_id is None and developer_id is not None:
+            existing_conversation.developer_id = developer_id
+            logger.info(f"Updated developer association during append: {developer_id}")
 
     # Get existing epoch (or create if none exists)
     epoch_repo = EpochRepository(session)
