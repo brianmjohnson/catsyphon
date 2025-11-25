@@ -657,7 +657,7 @@ class TestConversationUpdates:
     """Tests for conversation update modes (skip, replace, append)."""
 
     def test_update_mode_skip(self, db_session: Session):
-        """Test that skip mode returns existing conversation without changes."""
+        """Skip mode now behaves like replace to ensure new content ingests."""
         session_id = "test-session-skip"
         now = datetime.now(UTC)
 
@@ -700,10 +700,10 @@ class TestConversationUpdates:
 
         conv2 = ingest_conversation(db_session, parsed2, update_mode="skip")
 
-        # Should return same conversation
+        # Should reuse the same conversation record but replace content
         assert conv2.id == original_id
-        assert len(conv2.messages) == original_message_count
-        assert conv2.messages[0].content == "Original message"
+        assert len(conv2.messages) == 1
+        assert conv2.messages[0].content == "New message"
 
     def test_update_mode_replace(self, db_session: Session):
         """Test that replace mode deletes children and recreates with new data."""
