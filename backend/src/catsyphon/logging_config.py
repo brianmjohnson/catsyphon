@@ -73,23 +73,32 @@ def setup_logging(
             stderr_handler.setFormatter(formatter)
             root_logger.addHandler(stderr_handler)
 
-    # File handlers
+    # File handlers (fall back to console-only if unavailable, e.g., sandboxed tests)
     if settings.log_file_enabled:
-        log_dir = settings.log_directory
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_dir = settings.log_directory
+            log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Application log (INFO and DEBUG)
-        application_log = log_dir / _get_log_filename(context, config_id, "application")
-        app_handler = _create_rotating_file_handler(application_log, formatter)
-        app_handler.setLevel(logging.DEBUG)
-        app_handler.addFilter(_MaxLevelFilter(logging.INFO))
-        root_logger.addHandler(app_handler)
+            # Application log (INFO and DEBUG)
+            application_log = log_dir / _get_log_filename(
+                context, config_id, "application"
+            )
+            app_handler = _create_rotating_file_handler(application_log, formatter)
+            app_handler.setLevel(logging.DEBUG)
+            app_handler.addFilter(_MaxLevelFilter(logging.INFO))
+            root_logger.addHandler(app_handler)
 
-        # Error log (WARNING, ERROR, CRITICAL)
-        error_log = log_dir / _get_log_filename(context, config_id, "error")
-        error_handler = _create_rotating_file_handler(error_log, formatter)
-        error_handler.setLevel(logging.WARNING)
-        root_logger.addHandler(error_handler)
+            # Error log (WARNING, ERROR, CRITICAL)
+            error_log = log_dir / _get_log_filename(context, config_id, "error")
+            error_handler = _create_rotating_file_handler(error_log, formatter)
+            error_handler.setLevel(logging.WARNING)
+            root_logger.addHandler(error_handler)
+        except Exception as log_error:
+            # In restricted environments (e.g., tests, sandbox) file logging can fail.
+            # Fall back to console-only logging so daemons/child processes still start.
+            root_logger.warning(
+                "File logging disabled, using console only: %s", log_error
+            )
 
     # Log startup message
     root_logger.info(

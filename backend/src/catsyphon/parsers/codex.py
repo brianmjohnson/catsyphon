@@ -19,6 +19,7 @@ from typing import Any, Optional
 from catsyphon.models.parsed import ParsedConversation, ParsedMessage, ToolCall
 from catsyphon.parsers.base import ParseDataError, ParseFormatError
 from catsyphon.parsers.metadata import ParserCapability, ParserMetadata
+from catsyphon.parsers.types import ProbeResult
 from catsyphon.parsers.utils import extract_text_content, parse_iso_timestamp
 
 logger = logging.getLogger(__name__)
@@ -60,10 +61,18 @@ class CodexParser:
         return lines
 
     def can_parse(self, file_path: Path) -> bool:
+        return self.probe(file_path).can_parse
+
+    def probe(self, file_path: Path) -> ProbeResult:
         if file_path.suffix.lower() != ".jsonl":
-            return False
+            return ProbeResult(can_parse=False, confidence=0.0, reasons=["not .jsonl"])
         if not file_path.is_file():
-            return False
+            return ProbeResult(
+                can_parse=False, confidence=0.0, reasons=["file missing or unreadable"]
+            )
+
+        reasons: list[str] = []
+        confidence = 0.25
 
         for line in self._iter_sample_lines(file_path):
             try:
@@ -76,14 +85,18 @@ class CodexParser:
             if rec_type == "session_meta":
                 origin = payload.get("originator", "") or payload.get("source", "")
                 if "codex" in origin:
-                    return True
+                    reasons.append("originator=codex")
+                    return ProbeResult(can_parse=True, confidence=0.9, reasons=reasons)
                 if payload.get("model_provider") in {"openai", "openai-codex"}:
-                    return True
+                    reasons.append("model_provider=openai")
+                    confidence = max(confidence, 0.8)
             if rec_type in {"response_item", "event_msg"} and payload.get("type"):
                 # Heuristic: Codex message scaffolding
                 if "content" in payload or "message" in payload:
-                    return True
-        return False
+                    reasons.append("response_item scaffold found")
+                    confidence = max(confidence, 0.6)
+
+        return ProbeResult(can_parse=bool(reasons), confidence=confidence, reasons=reasons)
 
     def _load_records(self, file_path: Path) -> list[_CodexRecord]:
         records: list[_CodexRecord] = []

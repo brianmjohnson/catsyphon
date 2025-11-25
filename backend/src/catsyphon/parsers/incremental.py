@@ -151,6 +151,13 @@ def detect_file_change_type(
 
     # Quick check: file size unchanged
     if current_size == last_file_size:
+        # If we have a partial hash, verify content hasn't changed
+        if last_partial_hash:
+            current_partial_hash = calculate_partial_hash(
+                file_path, min(last_offset, current_size)
+            )
+            if current_partial_hash != last_partial_hash:
+                return ChangeType.REWRITE
         return ChangeType.UNCHANGED
 
     # File shrunk - truncation detected

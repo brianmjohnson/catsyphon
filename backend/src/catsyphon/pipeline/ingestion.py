@@ -8,7 +8,7 @@ files touched, and raw logs.
 
 import logging
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
@@ -31,7 +31,12 @@ from catsyphon.db.repositories import (
 from catsyphon.exceptions import DuplicateFileError
 from catsyphon.models.db import Conversation, Epoch, FileTouched, Message, RawLog
 from catsyphon.models.parsed import ParsedConversation
-from catsyphon.parsers.incremental import IncrementalParseResult
+from catsyphon.parsers.incremental import (
+    ChangeType,
+    IncrementalParseResult,
+    detect_file_change_type,
+)
+from catsyphon.parsers.types import ParseResult
 from catsyphon.utils.hashing import calculate_file_hash
 from catsyphon.db.connection import db_session
 
@@ -103,6 +108,128 @@ class StageMetrics:
             **self.stages,
             "total_ms": sum(self.stages.values()),
         }
+
+
+def _merge_metrics(
+    metrics: StageMetrics, metadata_fields: dict[str, Any], new_metrics: Optional[dict]
+) -> None:
+    """Merge numeric vs non-numeric metrics into trackers."""
+    if not new_metrics:
+        return
+
+    for key, value in new_metrics.items():
+        if isinstance(value, (int, float)):
+            metrics.stages[key] = float(value)
+        else:
+            metadata_fields[key] = value
+
+
+class IngestionJobTracker:
+    """Manages ingestion_job lifecycle and metric persistence."""
+
+    def __init__(
+        self,
+        session: Session,
+        source_type: str,
+        source_config_id: Optional[UUID],
+        file_path: Optional[Path],
+        created_by: Optional[str],
+        incremental: bool = False,
+    ) -> None:
+        self.session = session
+        self.start_time = datetime.now(UTC)
+        self.start_ms = time.time() * 1000
+        self.ingestion_repo = IngestionJobRepository(session)
+        self.job = self.ingestion_repo.create(
+            source_type=source_type,
+            source_config_id=source_config_id,
+            file_path=str(file_path) if file_path else None,
+            status="processing",
+            started_at=self.start_time,
+            created_by=created_by,
+            incremental=incremental,
+            messages_added=0,
+        )
+        session.flush()
+
+    def _elapsed_ms(self) -> int:
+        return int((time.time() * 1000) - self.start_ms)
+
+    def _finalize_metrics(
+        self, metrics: StageMetrics, metadata_fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**metrics.to_dict(), **metadata_fields}
+
+    def mark_duplicate(
+        self,
+        conversation_id: Optional[UUID],
+        raw_log_id: Optional[UUID],
+        metrics: StageMetrics,
+        metadata_fields: dict[str, Any],
+    ) -> None:
+        self.job.status = "duplicate"
+        self.job.conversation_id = conversation_id
+        self.job.raw_log_id = raw_log_id
+        self.job.processing_time_ms = self._elapsed_ms()
+        self.job.completed_at = datetime.now(UTC)
+        self.job.metrics = self._finalize_metrics(metrics, metadata_fields)
+        self.session.flush()
+
+    def mark_skipped(
+        self,
+        conversation_id: Optional[UUID],
+        raw_log_id: Optional[UUID],
+        metrics: StageMetrics,
+        metadata_fields: dict[str, Any],
+        reason: Optional[str] = None,
+    ) -> None:
+        self.job.status = "skipped"
+        self.job.conversation_id = conversation_id
+        self.job.raw_log_id = raw_log_id
+        self.job.processing_time_ms = self._elapsed_ms()
+        self.job.completed_at = datetime.now(UTC)
+        self.job.metrics = self._finalize_metrics(metrics, metadata_fields)
+        if reason:
+            self.job.error_message = reason
+        self.session.flush()
+
+    def mark_success(
+        self,
+        conversation_id: UUID,
+        raw_log_id: Optional[UUID],
+        messages_added: int,
+        incremental: bool,
+        ingest_mode: str,
+        metrics: StageMetrics,
+        metadata_fields: dict[str, Any],
+    ) -> None:
+        self.job.status = "success"
+        self.job.conversation_id = conversation_id
+        self.job.raw_log_id = raw_log_id
+        self.job.processing_time_ms = self._elapsed_ms()
+        self.job.messages_added = messages_added
+        self.job.incremental = incremental
+        merged_meta = {**metadata_fields, "ingest_mode": ingest_mode}
+        self.job.metrics = self._finalize_metrics(metrics, merged_meta)
+        self.job.completed_at = datetime.utcnow()
+        self.session.flush()
+
+    def mark_failed(
+        self,
+        error_message: str,
+        incremental: bool,
+        metrics: StageMetrics,
+        metadata_fields: dict[str, Any],
+        messages_added: int = 0,
+    ) -> None:
+        self.job.status = "failed"
+        self.job.error_message = error_message
+        self.job.processing_time_ms = self._elapsed_ms()
+        self.job.messages_added = messages_added
+        self.job.incremental = incremental
+        self.job.metrics = self._finalize_metrics(metrics, metadata_fields)
+        self.job.completed_at = datetime.utcnow()
+        self.session.flush()
 
 
 def _log_ingestion_failure_out_of_band(
@@ -286,6 +413,10 @@ def ingest_conversation(
     source_config_id: Optional[UUID] = None,
     created_by: Optional[str] = None,
     parse_metrics: Optional[dict[str, Any]] = None,
+    parse_result: Optional[ParseResult] = None,
+    tracker: Optional["IngestionJobTracker"] = None,
+    stage_metrics: Optional[StageMetrics] = None,
+    stage_metadata: Optional[dict[str, Any]] = None,
 ) -> Conversation:
     """
     Ingest a parsed conversation into the database.
@@ -307,6 +438,7 @@ def ingest_conversation(
         source_config_id: UUID of watch configuration if source_type='watch'
         created_by: Username who triggered the ingestion (for 'upload')
         parse_metrics: Optional parsing metrics from caller (e.g., duration, method, lines_read)
+        parse_result: Optional ParseResult providing parser metadata and warnings for observability
 
     Returns:
         Created or updated Conversation instance with all relationships loaded
@@ -335,44 +467,37 @@ def ingest_conversation(
             session.commit()
     """
     logger.info(f"Starting ingestion: {len(parsed.messages)} messages")
+    start_ms = time.time() * 1000
 
     # Get or create default workspace
     workspace_id = _get_or_create_default_workspace(session)
     logger.debug(f"Using workspace: {workspace_id}")
 
-    # Initialize timing for ingestion job tracking
-    start_time = datetime.utcnow()
-    start_ms = time.time() * 1000  # Convert to milliseconds
+    # Initialize metrics tracker and job
+    metrics = stage_metrics or StageMetrics()
+    metadata_fields: dict[str, Any] = stage_metadata or {}  # Non-numeric metadata fields
 
-    # Initialize stage metrics tracker
-    metrics = StageMetrics()
-    metadata_fields: dict[str, Any] = {}  # Non-numeric metadata fields
+    _merge_metrics(metrics, metadata_fields, parse_metrics)
 
-    # Merge parse metrics if provided by caller
-    if parse_metrics:
-        for key, value in parse_metrics.items():
-            if isinstance(value, (int, float)):
-                metrics.stages[key] = float(value)
-            else:
-                # Store non-numeric metadata separately
-                metadata_fields[key] = value
+    if parse_result:
+        metadata_fields["parser_name"] = parse_result.parser_name
+        metadata_fields["parser_version"] = parse_result.parser_version
+        metadata_fields["parse_method"] = parse_result.parse_method
+        metadata_fields["parse_change_type"] = parse_result.change_type
+        metadata_fields["parse_warning_count"] = len(parse_result.warnings or [])
+        if parse_result.warnings:
+            metadata_fields["parse_warnings"] = parse_result.warnings
+        _merge_metrics(metrics, metadata_fields, parse_result.metrics)
 
-    # Initialize ingestion job repository
-    ingestion_repo = IngestionJobRepository(session)
-
-    # Create initial ingestion job record
-    ingestion_job = ingestion_repo.create(
+    tracker = tracker or IngestionJobTracker(
+        session=session,
         source_type=source_type,
         source_config_id=source_config_id,
-        file_path=str(file_path) if file_path else None,
-        status="processing",
-        started_at=start_time,
+        file_path=file_path,
         created_by=created_by,
-        incremental=False,  # Will update if incremental path taken
-        messages_added=0,
+        incremental=False,
     )
-    session.flush()  # Get job ID
-    logger.debug(f"Created ingestion job: {ingestion_job.id}")
+    logger.debug(f"Created ingestion job: {tracker.job.id}")
 
     # Check for duplicate files before processing
     if file_path:
@@ -390,29 +515,21 @@ def ingest_conversation(
                 existing_raw_log = raw_log_repo.get_by_file_hash(file_hash)
                 if existing_raw_log:
                     # Update ingestion job as duplicate
-                    elapsed_ms = int((time.time() * 1000) - start_ms)
-                    ingestion_job.status = "duplicate"
-                    ingestion_job.raw_log_id = existing_raw_log.id
-                    ingestion_job.conversation_id = existing_raw_log.conversation_id
-                    ingestion_job.processing_time_ms = elapsed_ms
-                    ingestion_job.completed_at = datetime.utcnow()
-                    session.flush()
-                    logger.debug(
-                        f"Updated ingestion job to duplicate: {ingestion_job.id}"
+                    tracker.mark_duplicate(
+                        conversation_id=existing_raw_log.conversation_id,
+                        raw_log_id=existing_raw_log.id,
+                        metrics=metrics,
+                        metadata_fields=metadata_fields,
                     )
-
                     session.refresh(existing_raw_log.conversation)
                     return existing_raw_log.conversation
             else:
-                # Update ingestion job as failed
-                elapsed_ms = int((time.time() * 1000) - start_ms)
-                ingestion_job.status = "failed"
-                ingestion_job.error_message = (
-                    f"Duplicate file (hash: {file_hash[:8]}...)"
+                tracker.mark_failed(
+                    error_message=f"Duplicate file (hash: {file_hash[:8]}...)",
+                    incremental=False,
+                    metrics=metrics,
+                    metadata_fields=metadata_fields,
                 )
-                ingestion_job.processing_time_ms = elapsed_ms
-                ingestion_job.completed_at = datetime.utcnow()
-                session.flush()
                 raise DuplicateFileError(file_hash, str(file_path))
         else:
             # Not a duplicate - end deduplication check
@@ -453,41 +570,18 @@ def ingest_conversation(
                 existing_conversation = None  # Treat as new conversation
 
             if existing_conversation:
-                # Check if this is the SAME file being re-processed
-                if file_path and existing_conversation.raw_logs:
-                    existing_file_paths = {
-                        Path(rl.file_path)
-                        for rl in existing_conversation.raw_logs
-                        if rl.file_path is not None
-                    }
-                    is_same_file = file_path in existing_file_paths
-                else:
-                    is_same_file = False
-
+                # We have an existing conversation with this session_id.
+                # Decide based on update_mode, but do not skip merely because session_id exists.
                 if update_mode == "skip":
+                    # For skip mode, we still process unless change detection already marked UNCHANGED upstream.
+                    # Treat as replace to ensure new content is ingested.
                     logger.info(
-                        f"Skipping existing conversation: session_id={parsed.session_id}, "
-                        f"conversation_id={existing_conversation.id}"
+                        f"Existing conversation found for session_id={parsed.session_id}; "
+                        "update_mode=skip → treating as replace to ingest new content."
                     )
-                    # End database operations timing
-                    metrics.end_stage("database_operations_ms")
+                    update_mode = "replace"
 
-                    # Update ingestion job as skipped
-                    elapsed_ms = int((time.time() * 1000) - start_ms)
-                    ingestion_job.status = "skipped"
-                    ingestion_job.conversation_id = existing_conversation.id
-                    ingestion_job.processing_time_ms = elapsed_ms
-                    ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
-                    ingestion_job.completed_at = datetime.utcnow()
-                    session.flush()
-                    logger.debug(
-                        f"Updated ingestion job to skipped: {ingestion_job.id}"
-                    )
-
-                    session.refresh(existing_conversation)
-                    return existing_conversation
-
-                elif update_mode == "replace":
+                if update_mode == "replace":
                     logger.info(
                         f"Replacing existing conversation: session_id={parsed.session_id}, "
                         f"conversation_id={existing_conversation.id}"
@@ -603,18 +697,18 @@ def ingest_conversation(
                         messages_added = (
                             len(parsed.messages) - existing_conversation.message_count
                         )
-                        ingestion_job.status = "success"
-                        ingestion_job.conversation_id = updated_conversation.id
-                        ingestion_job.raw_log_id = existing_raw_log.id
-                        ingestion_job.processing_time_ms = elapsed_ms
-                        ingestion_job.messages_added = messages_added
-                        ingestion_job.incremental = True  # Incremental append
-                        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
-                        ingestion_job.completed_at = datetime.utcnow()
-                        session.flush()
+                        tracker.mark_success(
+                            conversation_id=updated_conversation.id,
+                            raw_log_id=existing_raw_log.id,
+                            messages_added=messages_added,
+                            incremental=True,
+                            ingest_mode="append",
+                            metrics=metrics,
+                            metadata_fields=metadata_fields,
+                        )
                         logger.debug(
                             f"Updated ingestion job to success (incremental): "
-                            f"{ingestion_job.id}, messages_added={messages_added}, "
+                            f"{tracker.job.id}, messages_added={messages_added}, "
                             f"processing_time={elapsed_ms}ms"
                         )
 
@@ -915,19 +1009,18 @@ def ingest_conversation(
         metrics.end_stage("database_operations_ms")
 
         # Update ingestion job as successful
-        elapsed_ms = int((time.time() * 1000) - start_ms)
-        ingestion_job.status = "success"
-        ingestion_job.conversation_id = conversation.id
-        ingestion_job.raw_log_id = raw_log.id if raw_log else None
-        ingestion_job.processing_time_ms = elapsed_ms
-        ingestion_job.messages_added = len(messages)
-        ingestion_job.incremental = False  # Full parse (not incremental)
-        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store metrics + metadata
-        ingestion_job.completed_at = datetime.utcnow()
-        session.flush()
+        tracker.mark_success(
+            conversation_id=conversation.id,
+            raw_log_id=raw_log.id if raw_log else None,
+            messages_added=len(messages),
+            incremental=False,
+            ingest_mode=update_mode,
+            metrics=metrics,
+            metadata_fields=metadata_fields,
+        )
         logger.debug(
-            f"Updated ingestion job to success: {ingestion_job.id}, "
-            f"processing_time={elapsed_ms}ms"
+            f"Updated ingestion job to success: {tracker.job.id}, "
+            f"processing_time={tracker.job.processing_time_ms}ms"
         )
 
         total_files = len(parsed.files_touched) + len(parsed.code_changes)
@@ -947,25 +1040,26 @@ def ingest_conversation(
         # Update ingestion job as failed
         elapsed_ms = int((time.time() * 1000) - start_ms)
         error_message = f"{type(e).__name__}: {str(e)}"
-        ingestion_job.status = "failed"
-        ingestion_job.error_message = error_message
-        ingestion_job.processing_time_ms = elapsed_ms
-        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}  # Store partial metrics
-        ingestion_job.completed_at = datetime.utcnow()
-        session.flush()
+        tracker.mark_failed(
+            error_message=error_message,
+            incremental=False,
+            metrics=metrics,
+            metadata_fields=metadata_fields,
+            messages_added=tracker.job.messages_added,
+        )
         logger.error(f"Ingestion failed: {type(e).__name__}: {str(e)}", exc_info=True)
 
         # Persist failure details out-of-band so they survive caller rollbacks
         _log_ingestion_failure_out_of_band(
-            job_id=ingestion_job.id,
+            job_id=tracker.job.id,
             source_type=source_type,
             source_config_id=source_config_id,
             file_path=file_path,
             error_message=error_message,
-            started_at=start_time,
-            processing_time_ms=elapsed_ms,
+            started_at=tracker.start_time,
+            processing_time_ms=tracker.job.processing_time_ms or 0,
             incremental=False,
-            messages_added=ingestion_job.messages_added,
+            messages_added=tracker.job.messages_added,
             metrics={**metrics.to_dict(), **metadata_fields},
             created_by=created_by,
         )
@@ -1207,6 +1301,9 @@ def ingest_messages_incremental(
     source_config_id: Optional[UUID] = None,
     created_by: Optional[str] = None,
     parse_metrics: Optional[dict[str, Any]] = None,
+    tracker: Optional["IngestionJobTracker"] = None,
+    stage_metrics: Optional[StageMetrics] = None,
+    stage_metadata: Optional[dict[str, Any]] = None,
 ) -> Conversation:
     """
     Ingest only NEW messages from incremental parsing (Phase 2).
@@ -1251,39 +1348,22 @@ def ingest_messages_incremental(
         f"new_messages={len(incremental_result.new_messages)}"
     )
 
-    # Initialize timing for ingestion job tracking
-    start_time = datetime.utcnow()
-    start_ms = time.time() * 1000  # Convert to milliseconds
-
     # Initialize stage metrics tracker
-    metrics = StageMetrics()
-    metadata_fields: dict[str, Any] = {}  # Non-numeric metadata fields
+    metrics = stage_metrics or StageMetrics()
+    metadata_fields: dict[str, Any] = stage_metadata or {}  # Non-numeric metadata fields
 
     # Merge parse metrics if provided by caller
-    if parse_metrics:
-        for key, value in parse_metrics.items():
-            if isinstance(value, (int, float)):
-                metrics.stages[key] = float(value)
-            else:
-                # Store non-numeric metadata separately
-                metadata_fields[key] = value
+    _merge_metrics(metrics, metadata_fields, parse_metrics)
 
-    # Initialize ingestion job repository
-    ingestion_repo = IngestionJobRepository(session)
-
-    # Create initial ingestion job record
-    ingestion_job = ingestion_repo.create(
+    tracker = tracker or IngestionJobTracker(
+        session=session,
         source_type=source_type,
         source_config_id=source_config_id,
-        file_path=None,  # Not provided in incremental mode
-        status="processing",
-        started_at=start_time,
+        file_path=None,
         created_by=created_by,
         incremental=True,
-        messages_added=0,
     )
-    session.flush()  # Get job ID
-    logger.debug(f"Created ingestion job (incremental): {ingestion_job.id}")
+    logger.debug(f"Created ingestion job (incremental): {tracker.job.id}")
 
     try:
         # Get existing conversation and raw_log
@@ -1423,20 +1503,19 @@ def ingest_messages_incremental(
         session.flush()
         session.refresh(conversation)
 
-        # Update ingestion job as successful
-        elapsed_ms = int((time.time() * 1000) - start_ms)
-        ingestion_job.status = "success"
-        ingestion_job.conversation_id = conversation.id
-        ingestion_job.raw_log_id = uuid.UUID(raw_log_id)
-        ingestion_job.processing_time_ms = elapsed_ms
-        ingestion_job.messages_added = len(incremental_result.new_messages)
-        ingestion_job.completed_at = datetime.utcnow()
-        ingestion_job.metrics = {**metrics.to_dict(), **metadata_fields}
-        session.flush()
+        tracker.mark_success(
+            conversation_id=conversation.id,
+            raw_log_id=uuid.UUID(raw_log_id),
+            messages_added=len(incremental_result.new_messages),
+            incremental=True,
+            ingest_mode="append",
+            metrics=metrics,
+            metadata_fields=metadata_fields,
+        )
         logger.debug(
-            f"Updated ingestion job to success: {ingestion_job.id}, "
+            f"Updated ingestion job to success: {tracker.job.id}, "
             f"messages_added={len(incremental_result.new_messages)}, "
-            f"processing_time={elapsed_ms}ms"
+            f"processing_time={tracker.job.processing_time_ms}ms"
         )
 
         logger.info(
@@ -1447,20 +1526,27 @@ def ingest_messages_incremental(
         return conversation
 
     except Exception as e:
-        elapsed_ms = int((time.time() * 1000) - start_ms)
         error_message = f"{type(e).__name__}: {str(e)}"
         failure_metrics = {**metrics.to_dict(), **metadata_fields}
 
+        tracker.mark_failed(
+            error_message=error_message,
+            incremental=True,
+            metrics=metrics,
+            metadata_fields=metadata_fields,
+            messages_added=tracker.job.messages_added,
+        )
+
         _log_ingestion_failure_out_of_band(
-            job_id=ingestion_job.id,
+            job_id=tracker.job.id,
             source_type=source_type,
             source_config_id=source_config_id,
             file_path=Path(raw_log.file_path) if "raw_log" in locals() and raw_log and raw_log.file_path else None,
             error_message=error_message,
-            started_at=start_time,
-            processing_time_ms=elapsed_ms,
+            started_at=tracker.start_time,
+            processing_time_ms=tracker.job.processing_time_ms or 0,
             incremental=True,
-            messages_added=ingestion_job.messages_added,
+            messages_added=tracker.job.messages_added,
             metrics=failure_metrics,
             created_by=created_by,
         )

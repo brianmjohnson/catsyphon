@@ -26,6 +26,7 @@ from catsyphon.parsers.incremental import (
     calculate_partial_hash,
 )
 from catsyphon.parsers.metadata import ParserCapability, ParserMetadata
+from catsyphon.parsers.types import ProbeResult
 from catsyphon.parsers.utils import (
     extract_text_content,
     extract_thinking_content,
@@ -103,49 +104,70 @@ class ClaudeCodeParser:
         return self._metadata
 
     def can_parse(self, file_path: Path) -> bool:
-        """
-        Check if this parser can handle the given log file.
+        return self.probe(file_path).can_parse
 
-        Args:
-            file_path: Path to the log file to check
-
-        Returns:
-            True if this is a Claude Code log file, False otherwise
+    def probe(self, file_path: Path) -> ProbeResult:
         """
-        # Check file extension
+        Fast probe to determine whether this parser can handle the file.
+        """
+        reasons: list[str] = []
+
         if file_path.suffix.lower() != ".jsonl":
-            return False
+            return ProbeResult(can_parse=False, confidence=0.0, reasons=["not .jsonl"])
 
-        # Check file exists and is readable
         if not file_path.exists() or not file_path.is_file():
-            return False
+            return ProbeResult(
+                can_parse=False, confidence=0.0, reasons=["file missing or unreadable"]
+            )
 
-        # Scan a small prefix to detect format
-        # Each JSONL message is independent - sessionId could appear early
+        confidence = 0.3
+        saw_json = False
+
+        # Scan content to detect format
+        # Each JSONL message is independent - sessionId could appear anywhere
         try:
             with file_path.open("r", encoding="utf-8", errors="ignore") as f:
                 for idx, line in enumerate(f):
-                    if idx > 200:  # lightweight detection cap
+                    if idx > 1000:  # still capped to keep probe reasonably light
                         break
                     if not line.strip():
                         continue
 
                     try:
                         data = json.loads(line)
+                        saw_json = True
                         if "sessionId" in data and "version" in data:
-                            return True
+                            reasons.append("sessionId+version found")
+                            return ProbeResult(can_parse=True, confidence=0.9, reasons=reasons)
                         if "sessionId" in data:
-                            return True
+                            reasons.append("sessionId found")
+                            confidence = max(confidence, 0.7)
+                        if data.get("version"):
+                            reasons.append("version found")
+                            confidence = max(confidence, 0.6)
                         if data.get("type") in ("summary", "file-history-snapshot"):
-                            return True
+                            reasons.append("metadata entry found")
+                            confidence = max(confidence, 0.6)
+                        # Conversational records typically have message.role/content
+                        message = data.get("message") or {}
+                        if message.get("role") in {"user", "assistant"}:
+                            reasons.append("message role found")
+                            confidence = max(confidence, 0.5)
+                        if "type" in data and data.get("type") in {"user", "assistant"}:
+                            reasons.append("conversation type entry")
+                            confidence = max(confidence, 0.5)
                     except json.JSONDecodeError:
                         continue
-
         except (OSError, UnicodeDecodeError) as e:
             logger.debug(f"Cannot read file {file_path}: {e}")
-            return False
+            return ProbeResult(can_parse=False, confidence=0.0, reasons=[str(e)])
 
-        return False
+        # Fallback: if we saw JSONL content but no markers, still attempt parse with low confidence.
+        if not reasons and saw_json:
+            reasons.append("jsonl content fallback (no markers)")
+            confidence = max(confidence, 0.2)
+
+        return ProbeResult(can_parse=bool(reasons), confidence=confidence, reasons=reasons)
 
     def parse(self, file_path: Path) -> ParsedConversation:
         """

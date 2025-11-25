@@ -1420,6 +1420,7 @@ interface IngestionJobCardProps {
 }
 
 function IngestionJobCard({ job }: IngestionJobCardProps) {
+  const jobIngestMode = (job.ingest_mode || job.metrics?.ingest_mode) as string | undefined;
   // Status badge styling
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -1540,6 +1541,13 @@ function IngestionJobCard({ job }: IngestionJobCardProps) {
           {job.incremental && (
             <span className="px-2 py-1 text-xs font-medium rounded bg-purple-500/10 text-purple-600">
               ⚡ Incremental
+            </span>
+          )}
+
+          {/* Ingest Mode */}
+          {jobIngestMode && (
+            <span className="px-2 py-1 text-xs font-medium rounded bg-secondary text-secondary-foreground">
+              Mode: {jobIngestMode}
             </span>
           )}
 

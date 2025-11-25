@@ -6,11 +6,13 @@ automatic format detection to route log files to the appropriate parser.
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 from catsyphon.models.parsed import ParsedConversation
 from catsyphon.parsers.base import ConversationParser, ParseFormatError
+from catsyphon.parsers.types import ParseResult, ProbeResult
 from catsyphon.parsers.incremental import IncrementalParser
 from catsyphon.parsers.metadata import ParserMetadata
 
@@ -74,15 +76,15 @@ class ParserRegistry:
 
         return sorted(self._parsers, key=lambda p: score(p), reverse=True)
 
-    def parse(self, file_path: Path) -> ParsedConversation:
+    def parse_with_metadata(self, file_path: Path) -> ParseResult:
         """
-        Parse a conversation log file with automatic format detection.
+        Parse a conversation log file with automatic format detection and metadata.
 
         Args:
             file_path: Path to the log file to parse
 
         Returns:
-            ParsedConversation object from the appropriate parser
+            ParseResult containing ParsedConversation and parser metadata
 
         Raises:
             ParseFormatError: If no parser can handle the file format
@@ -92,39 +94,92 @@ class ParserRegistry:
         Example:
             >>> registry = ParserRegistry()
             >>> registry.register(ClaudeCodeParser())
-            >>> conversation = registry.parse(Path("log.jsonl"))
+            >>> result = registry.parse_with_metadata(Path("log.jsonl"))
         """
         if not file_path.exists():
             raise FileNotFoundError(f"Log file not found: {file_path}")
+
+        attempts: list[str] = []
+        parse_errors: list[str] = []
 
         # Try each registered parser
         for parser in self._sorted_parsers(file_path):
             parser_name = type(parser).__name__
             logger.debug(f"Trying parser: {parser_name}")
 
+            # Probe
             try:
-                if parser.can_parse(file_path):
-                    logger.info(f"Parsing {file_path} with {parser_name}")
-                    parsed = parser.parse(file_path)
-                    # Attach parser metadata for downstream observability
-                    parser_meta: Optional[ParserMetadata] = getattr(parser, "metadata", None)
-                    if parser_meta is not None:
-                        existing_meta = getattr(parsed, "metadata", {}) or {}
-                        existing_meta["parser"] = {
-                            "name": parser_meta.name,
-                            "version": parser_meta.version,
-                        }
-                        parsed.metadata = existing_meta
-                    return parsed
-            except Exception as e:
-                logger.debug(f"Parser {parser_name} failed: {e}")
+                probe_fn = getattr(parser, "probe", None)
+                if callable(probe_fn):
+                    probe: ProbeResult = probe_fn(file_path)
+                    can_parse = probe.can_parse
+                    reasons = probe.reasons
+                    confidence = probe.confidence
+                else:
+                    can_parse = parser.can_parse(file_path)
+                    reasons = ["can_parse returned True"] if can_parse else []
+                    confidence = 0.5
+            except Exception as probe_error:
+                probe_msg = f"{parser_name} probe failed: {probe_error}"
+                attempts.append(probe_msg)
+                logger.debug(probe_msg)
                 continue
 
+            if not can_parse:
+                attempts.append(f"{parser_name} skipped (probe negative)")
+                continue
+
+            # Parse
+            try:
+                parse_start = time.time() * 1000
+                parsed = parser.parse(file_path)
+                parse_duration_ms = (time.time() * 1000) - parse_start
+            except Exception as parse_error:
+                error_msg = f"{parser_name} parse failed: {parse_error}"
+                parse_errors.append(error_msg)
+                logger.debug(error_msg, exc_info=True)
+                continue
+
+            parser_meta: Optional[ParserMetadata] = getattr(parser, "metadata", None)
+            parser_meta_name = parser_meta.name if parser_meta else parser_name.lower()
+            parser_meta_version = parser_meta.version if parser_meta else None
+
+            # Attach parser metadata to parsed output for downstream observability
+            if parser_meta is not None:
+                existing_meta = getattr(parsed, "metadata", {}) or {}
+                existing_meta["parser"] = {
+                    "name": parser_meta.name,
+                    "version": parser_meta.version,
+                    "confidence": confidence,
+                    "reasons": reasons,
+                }
+                parsed.metadata = existing_meta
+
+            metrics = {"parse_duration_ms": parse_duration_ms}
+
+            return ParseResult(
+                conversation=parsed,
+                parser_name=parser_meta_name,
+                parser_version=parser_meta_version,
+                parse_method="full",
+                change_type=None,
+                metrics=metrics,
+                warnings=[],
+            )
+
         # No parser could handle this file
+        attempted = "; ".join(attempts + parse_errors) if (attempts or parse_errors) else "no parsers registered"
         raise ParseFormatError(
-            f"No parser could handle file format: {file_path}. "
-            f"Tried {len(self._parsers)} parser(s)."
+            f"No parser could handle file format: {file_path}. Attempts: {attempted}"
         )
+
+    def parse(self, file_path: Path) -> ParsedConversation:
+        """
+        Backwards-compatible parse that returns ParsedConversation only.
+
+        Use parse_with_metadata() for richer observability.
+        """
+        return self.parse_with_metadata(file_path).conversation
 
     def find_parser(self, file_path: Path) -> Optional[ConversationParser]:
         """
@@ -145,6 +200,13 @@ class ParserRegistry:
 
         for parser in self._sorted_parsers(file_path):
             try:
+                probe_fn = getattr(parser, "probe", None)
+                if callable(probe_fn):
+                    probe: ProbeResult = probe_fn(file_path)
+                    if probe.can_parse:
+                        return parser
+                    continue
+
                 if parser.can_parse(file_path):
                     return parser
             except Exception as e:
@@ -182,8 +244,14 @@ class ParserRegistry:
         for parser in self._parsers:
             try:
                 # Check if parser can handle this file format
-                if not parser.can_parse(file_path):
-                    continue
+                probe_fn = getattr(parser, "probe", None)
+                if callable(probe_fn):
+                    probe: ProbeResult = probe_fn(file_path)
+                    if not probe.can_parse:
+                        continue
+                else:
+                    if not parser.can_parse(file_path):
+                        continue
 
                 # Check if parser implements IncrementalParser protocol
                 if not isinstance(parser, IncrementalParser):

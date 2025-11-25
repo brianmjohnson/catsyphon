@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ===== Base Schemas =====
 
@@ -470,6 +470,10 @@ class IngestionJobResponse(BaseModel):
     processing_time_ms: Optional[int] = None
     incremental: bool
     messages_added: int
+    ingest_mode: Optional[str] = Field(
+        default=None,
+        description="Ingestion mode used for this job (replace/append/skip)"
+    )
     metrics: dict[str, Any] = Field(
         default_factory=dict,
         description="Stage-level performance metrics (deduplication_check_ms, database_operations_ms, total_ms)",
@@ -481,6 +485,19 @@ class IngestionJobResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def inject_ingest_mode(cls, values: Any) -> Any:
+        """
+        Pull ingest_mode from metrics if not present on the model.
+        """
+        if isinstance(values, dict):
+            if values.get("ingest_mode") is None and isinstance(values.get("metrics"), dict):
+                metrics = values.get("metrics") or {}
+                if "ingest_mode" in metrics:
+                    values["ingest_mode"] = metrics["ingest_mode"]
+        return values
 
 
 class IngestionJobFilters(BaseModel):
@@ -601,6 +618,27 @@ class IngestionStatsResponse(BaseModel):
     error_rates_by_stage: dict[str, int] = Field(
         default_factory=dict,
         description="Count of errors by stage (if tracked in future)",
+    )
+
+    # Parser/change-type aggregates
+    parser_usage: dict[str, int] = Field(
+        default_factory=dict, description="Count of jobs per parser_name"
+    )
+    parser_version_usage: dict[str, int] = Field(
+        default_factory=dict, description="Count of jobs per parser@version"
+    )
+    parse_methods: dict[str, int] = Field(
+        default_factory=dict,
+        description="Count of jobs per parse_method (full, incremental, etc.)",
+    )
+    parse_change_types: dict[str, int] = Field(
+        default_factory=dict, description="Count of jobs per parse_change_type"
+    )
+    avg_parse_warning_count: Optional[float] = Field(
+        default=None, description="Average number of parser warnings per job"
+    )
+    parse_warning_rate: Optional[float] = Field(
+        default=None, description="Percentage of jobs with parser warnings (0-100)"
     )
 
 

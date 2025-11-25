@@ -549,6 +549,43 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             llm_cache_hits / llm_total_calls if llm_total_calls > 0 else None
         )
 
+        # Parser and change-type aggregates
+        parser_usage: dict[str, int] = {}
+        parser_version_usage: dict[str, int] = {}
+        parse_methods: dict[str, int] = {}
+        change_type_counts: dict[str, int] = {}
+        warning_counts: list[int] = []
+        jobs_with_warnings = 0
+
+        for job in jobs_with_metrics:
+            if not job.metrics:
+                continue
+            parser_name = job.metrics.get("parser_name")
+            parser_version = job.metrics.get("parser_version")
+            parse_method = job.metrics.get("parse_method")
+            change_type = job.metrics.get("parse_change_type")
+            warning_count = job.metrics.get("parse_warning_count")
+            warnings_list = job.metrics.get("parse_warnings")
+
+            if parser_name:
+                parser_usage[parser_name] = parser_usage.get(parser_name, 0) + 1
+            if parser_name and parser_version:
+                key = f"{parser_name}@{parser_version}"
+                parser_version_usage[key] = parser_version_usage.get(key, 0) + 1
+            if parse_method:
+                parse_methods[parse_method] = parse_methods.get(parse_method, 0) + 1
+            if change_type:
+                change_type_counts[change_type] = change_type_counts.get(
+                    change_type, 0
+                ) + 1
+            if warning_count is not None:
+                warning_counts.append(warning_count)
+                if warning_count > 0:
+                    jobs_with_warnings += 1
+            elif warnings_list:
+                warning_counts.append(len(warnings_list))
+                jobs_with_warnings += 1
+
         return {
             "total_jobs": total,
             "by_status": by_status,
@@ -585,6 +622,19 @@ class IngestionJobRepository(BaseRepository[IngestionJob]):
             "total_llm_cost_usd": total_llm_cost,
             "llm_cache_hit_rate": llm_cache_rate,
             "error_rates_by_stage": {},  # Placeholder for future error tracking
+            # Parser/change-type aggregates
+            "parser_usage": parser_usage,
+            "parser_version_usage": parser_version_usage,
+            "parse_methods": parse_methods,
+            "parse_change_types": change_type_counts,
+            "avg_parse_warning_count": (
+                sum(warning_counts) / len(warning_counts) if warning_counts else None
+            ),
+            "parse_warning_rate": (
+                jobs_with_warnings / len(jobs_with_metrics) * 100
+                if jobs_with_metrics
+                else None
+            ),
         }
 
     def search(

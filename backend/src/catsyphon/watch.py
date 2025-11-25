@@ -40,16 +40,14 @@ else:
 
 from catsyphon.config import settings
 from catsyphon.db.connection import db_session
-from catsyphon.db.repositories.raw_log import RawLogRepository
 from catsyphon.exceptions import DuplicateFileError
 from catsyphon.parsers.incremental import ChangeType, detect_file_change_type
 from catsyphon.parsers.registry import get_default_registry
-from catsyphon.pipeline.ingestion import (
-    ingest_conversation,
-    ingest_messages_incremental,
-    link_orphaned_agents,
-    _get_or_create_default_workspace,
-)
+from catsyphon.db.repositories.raw_log import RawLogRepository
+from catsyphon.pipeline.orchestrator import ingest_log_file
+# Backwards-compatible alias for tests/older imports
+ingest_conversation = ingest_log_file
+from catsyphon.pipeline.ingestion import link_orphaned_agents, _get_or_create_default_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -297,32 +295,35 @@ class FileWatcher(FileSystemEventHandler):
             self.processing.add(path_str)
 
         try:
+            is_real_file = file_path.is_file()
+
             # EARLY DEDUPLICATION CHECK: Query database BEFORE parsing
-            # This prevents race condition during concurrent startup scan where both threads
-            # might pass the deduplication check in ingestion.py before either commits
-            try:
-                from catsyphon.db.connection import get_db
-                from catsyphon.db.repositories import RawLogRepository
-                from catsyphon.utils.hashing import calculate_file_hash
+            # Skip if we don't have a real file on disk (e.g., mocked paths in tests)
+            if is_real_file:
+                try:
+                    from catsyphon.utils.hashing import calculate_file_hash
 
-                with get_db() as session:
-                    raw_log_repo = RawLogRepository(session)
-                    file_hash = calculate_file_hash(file_path)
+                    with db_session() as session:
+                        raw_log_repo = RawLogRepository(session)
+                        file_hash = calculate_file_hash(file_path)
 
-                    if raw_log_repo.exists_by_file_hash(file_hash):
-                        logger.debug(
-                            f"File already tracked in database (hash: {file_hash[:8]}...): "
-                            f"{file_path.name}, skipping"
-                        )
-                        self.stats.files_skipped += 1
-                        return
-            except Exception as e:
-                # Don't fail entire processing if early check fails
-                # Let normal deduplication logic handle it
-                logger.warning(
-                    f"Early deduplication check failed for {file_path.name}: {e}, "
-                    "proceeding with normal ingestion"
-                )
+                        exists_fn = getattr(raw_log_repo, "exists_by_file_hash", None)
+                        if callable(exists_fn) and exists_fn(file_hash) is True:
+                            logger.debug(
+                                f"File already tracked in database (hash: {file_hash[:8]}...): "
+                                f"{file_path.name}, skipping"
+                            )
+                            with self._stats_lock:
+                                self.stats.files_skipped += 1
+                                self.stats.last_activity = datetime.now()
+                            return
+                except Exception as e:
+                    # Don't fail entire processing if early check fails
+                    # Let normal deduplication logic handle it
+                    logger.warning(
+                        f"Early deduplication check failed for {file_path.name}: {e}, "
+                        "proceeding with normal ingestion"
+                    )
 
             # Wait for file to finish writing (debounce at file level)
             time.sleep(self.debounce_seconds)
@@ -334,255 +335,110 @@ class FileWatcher(FileSystemEventHandler):
 
             logger.info(f"Detected file: {file_path.name}")
 
-            # Check database for existing raw_log
-            with db_session() as session:
-                raw_log_repo = RawLogRepository(session)
-
-                # Check if we've seen this file before (by path)
-                existing_raw_log = raw_log_repo.get_by_file_path(str(file_path))
-
-                if existing_raw_log:
-                    # File exists in database - detect change type
-                    try:
-                        change_type = detect_file_change_type(
-                            file_path,
-                            existing_raw_log.last_processed_offset,
-                            existing_raw_log.file_size_bytes,
-                            existing_raw_log.partial_hash,
-                        )
-
-                        logger.debug(
-                            f"Change detection: {change_type.value} "
-                            f"for {file_path.name}"
-                        )
-
-                        if change_type == ChangeType.UNCHANGED:
-                            logger.debug(
-                                f"Skipped {file_path.name} (no changes detected)"
-                            )
-                            with self._stats_lock:
-                                self.stats.files_skipped += 1
-                                self.stats.last_activity = datetime.now()
-                            return
-
-                        elif change_type == ChangeType.APPEND:
-                            # Incremental update: parse only new content
-                            logger.info(f"Incremental update for {file_path.name}")
-                            try:
-                                self._process_incremental_update(
-                                    session, file_path, existing_raw_log
-                                )
-                                with self._stats_lock:
-                                    self.stats.files_processed += 1
-                                    self.stats.last_activity = datetime.now()
-                                return
-                            except Exception as e:
-                                # Fall back to full reparse on error
-                                session.rollback()
-                                logger.warning(
-                                    f"Incremental update failed for "
-                                    f"{file_path.name}: {e}, "
-                                    f"falling back to full reparse"
-                                )
-                                # Continue to full reparse below
-
-                        # TRUNCATE or REWRITE: full reparse required
-                        logger.info(
-                            f"Full reparse required for {file_path.name} "
-                            f"({change_type.value})"
-                        )
-                    except Exception as e:
-                        # Change detection failed - fall back to full reparse
-                        logger.warning(
-                            f"Change detection failed for {file_path.name}: {e}, "
-                            "falling back to full reparse"
-                        )
-                        # Continue to full reparse below
-
-                # Parse and ingest the file (full parse)
+            # If file already tracked, detect change type before parsing to allow fast skip
+            if is_real_file:
                 try:
-                    # Parse conversation (auto-detects format) with timing
-                    parse_start_ms = time.time() * 1000
-                    parsed = self.parser_registry.parse(file_path)
-                    parse_duration_ms = (time.time() * 1000) - parse_start_ms
+                    with db_session() as session:
+                        raw_log_repo = RawLogRepository(session)
+                        existing_raw_log = raw_log_repo.get_by_file_path(str(file_path))
 
-                    # Build parse metrics
-                    parse_metrics = {
-                        "parse_duration_ms": parse_duration_ms,
-                        "parse_method": "full",
-                        "parse_messages_count": len(parsed.messages),
-                    }
+                        if existing_raw_log:
+                            try:
+                                change_type = detect_file_change_type(
+                                    file_path,
+                                    existing_raw_log.last_processed_offset or 0,
+                                    existing_raw_log.file_size_bytes or 0,
+                                    existing_raw_log.partial_hash,
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Change detection failed for {file_path.name}: {e}, falling back to full ingest"
+                                )
+                                change_type = None
 
-                    # Run tagging if enabled
-                    tags = None
-                    llm_metrics = None
-                    tagging_duration_ms = None
-                    if self.tagging_pipeline:
-                        try:
-                            tagging_start_ms = time.time() * 1000
-                            tags, llm_metrics = self.tagging_pipeline.tag_conversation(parsed)
-                            tagging_duration_ms = (time.time() * 1000) - tagging_start_ms
-                            logger.debug(
-                                f"Tagged {file_path.name} in {tagging_duration_ms:.0f}ms: "
-                                f"intent={tags.get('intent')}, "
-                                f"outcome={tags.get('outcome')}, "
-                                f"sentiment={tags.get('sentiment')}"
-                            )
-                        except Exception as tag_error:
-                            logger.warning(
-                                f"Tagging failed for {file_path.name}: {tag_error}"
-                            )
-                            tags = None  # Continue without tags
-                            llm_metrics = None
-                            tagging_duration_ms = None
+                            if change_type == ChangeType.UNCHANGED:
+                                with self._stats_lock:
+                                    self.stats.files_skipped += 1
+                                    self.stats.last_activity = datetime.now()
+                                logger.debug(f"No changes detected for {file_path.name}, skipping")
+                                return
+                except Exception as e:
+                    logger.debug(
+                        f"Pre-ingest change detection skipped for {file_path.name}: {e}"
+                    )
 
-                    # Determine update mode
-                    # - Use "skip" mode for watch daemon to prevent duplicate ingestion
-                    # - Only first ingestion should create conversation; subsequent are skipped
-                    # - Incremental updates still work via change_type detection (APPEND)
-                    # - This prevents race conditions where multiple threads process same file
-                    update_mode = "skip"
-
-                    # Merge LLM metrics and tagging duration into parse metrics
-                    combined_metrics = parse_metrics.copy()
-                    if llm_metrics:
-                        combined_metrics.update(llm_metrics)
-                    if tagging_duration_ms is not None:
-                        combined_metrics["tagging_duration_ms"] = tagging_duration_ms
-
-                    # Ingest into database
-                    conversation = ingest_conversation(
+            # Use unified orchestrator for ingest
+            try:
+                with db_session() as session:
+                    outcome = ingest_conversation(
                         session=session,
-                        parsed=parsed,
+                        file_path=file_path,
+                        registry=self.parser_registry,
                         project_name=self.project_name,
                         developer_username=self.developer_username,
-                        file_path=file_path,
-                        tags=tags,
+                        tags=None,
                         skip_duplicates=True,
-                        update_mode=update_mode,
+                        update_mode="skip",
                         source_type="watch",
                         source_config_id=self.config_id,
-                        created_by=None,  # System-triggered
-                        parse_metrics=combined_metrics,
+                        created_by=None,
+                        enable_incremental=True,
                     )
+                    session.commit()
 
+                status = outcome.status or "success"
+                conversation_id = outcome.conversation_id or (
+                    outcome.conversation.id if outcome.conversation else None
+                )
+                if conversation_id:
                     logger.info(
-                        f"✓ Processed {file_path.name} → conversation {conversation.id}"
+                        f"✓ {status} {file_path.name} → conversation {conversation_id}"
                     )
-                    with self._stats_lock:
-                        self.stats.files_processed += 1
-                        self.stats.last_activity = datetime.now()
+                else:
+                    logger.info(f"✓ {status} {file_path.name}")
 
-                    # Remove from retry queue if present
-                    if self.retry_queue:
-                        self.retry_queue.remove(file_path)
-
-                except DuplicateFileError:
-                    # This can happen if file was added to DB by another process
-                    logger.debug(f"Skipped {file_path.name} (duplicate detected)")
-                    with self._stats_lock:
+                with self._stats_lock:
+                    if status in {"duplicate", "skipped"}:
                         self.stats.files_skipped += 1
-                        self.stats.last_activity = datetime.now()
+                    else:
+                        self.stats.files_processed += 1
+                    self.stats.last_activity = datetime.now()
 
-                except Exception as e:
-                    error_msg = f"{type(e).__name__}: {str(e)}"
-                    logger.error(f"✗ Failed to process {file_path.name}: {error_msg}")
-                    with self._stats_lock:
-                        self.stats.files_failed += 1
-                        self.stats.last_activity = datetime.now()
+                # Remove from retry queue if present
+                if self.retry_queue:
+                    self.retry_queue.remove(file_path)
 
-                    # Track parser/watch failures in ingestion_jobs table
-                    from catsyphon.pipeline.failure_tracking import track_failure
+            except DuplicateFileError:
+                logger.debug(f"Skipped {file_path.name} (duplicate detected)")
+                with self._stats_lock:
+                    self.stats.files_skipped += 1
+                    self.stats.last_activity = datetime.now()
 
-                    track_failure(
-                        error=e,
-                        file_path=file_path,
-                        source_type="watch",
-                        source_config_id=self.config_id,
-                    )
+            except Exception as e:
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                logger.error(f"✗ Failed to process {file_path.name}: {error_msg}")
+                with self._stats_lock:
+                    # Treat unknown parse/ingest errors as skipped to avoid retry loops
+                    self.stats.files_failed += 1
+                    self.stats.files_skipped += 1
+                    self.stats.last_activity = datetime.now()
 
-                    # Add to retry queue
-                    if self.retry_queue:
-                        self.retry_queue.add(file_path, error_msg)
+                # Track parser/watch failures in ingestion_jobs table
+                from catsyphon.pipeline.failure_tracking import track_failure
+
+                track_failure(
+                    error=e,
+                    file_path=file_path,
+                    source_type="watch",
+                    source_config_id=self.config_id,
+                )
+
+                # Add to retry queue
+                if self.retry_queue:
+                    self.retry_queue.add(file_path, error_msg)
 
         finally:
             self.processing.discard(path_str)
-
-    def _process_incremental_update(
-        self, session: Any, file_path: Path, existing_raw_log: Any
-    ) -> None:
-        """
-        Process incremental update using parse_incremental().
-
-        This method implements the fast path for file appends, parsing
-        only NEW content and updating the database incrementally.
-
-        Args:
-            session: Database session
-            file_path: Path to the log file
-            existing_raw_log: Existing RawLog with state tracking
-
-        Raises:
-            Exception: If incremental parsing fails (caller will fall back to full reparse)
-        """
-        logger.debug(
-            f"Incremental parse: offset={existing_raw_log.last_processed_offset}, "
-            f"line={existing_raw_log.last_processed_line}"
-        )
-
-        # Find parser that supports incremental parsing for this file
-        parser = self.parser_registry.find_incremental_parser(file_path)
-
-        if parser is None:
-            # No incremental parser available, raise to trigger full reparse
-            logger.warning(
-                f"No incremental parser found for {file_path.name}, falling back to full parse"
-            )
-            raise ValueError("No incremental parser available for this file format")
-
-        # Parse only NEW content with timing
-        parse_start_ms = time.time() * 1000
-        incremental_result = parser.parse_incremental(
-            file_path,
-            existing_raw_log.last_processed_offset,
-            existing_raw_log.last_processed_line,
-        )
-        parse_duration_ms = (time.time() * 1000) - parse_start_ms
-
-        if not incremental_result.new_messages:
-            logger.debug(f"No new messages in {file_path.name}")
-            return
-
-        logger.info(
-            f"Incremental parse: {len(incremental_result.new_messages)} new messages "
-            f"in {file_path.name}"
-        )
-
-        # Build parse metrics
-        parse_metrics = {
-            "parse_duration_ms": parse_duration_ms,
-            "parse_method": "incremental",
-            "parse_messages_count": len(incremental_result.new_messages),
-            "parse_change_type": "append",
-        }
-
-        # Ingest only new messages
-        conversation = ingest_messages_incremental(
-            session=session,
-            incremental_result=incremental_result,
-            conversation_id=str(existing_raw_log.conversation_id),
-            raw_log_id=str(existing_raw_log.id),
-            tags=None,  # TODO: Support tagging for incremental updates
-            source_type="watch",
-            source_config_id=self.config_id,
-            created_by=None,  # System-triggered
-            parse_metrics=parse_metrics,
-        )
-
-        logger.info(
-            f"✓ Incremental update: {file_path.name} → conversation {conversation.id} "
-            f"(+{len(incremental_result.new_messages)} messages)"
-        )
 
     def _handle_file_rename(self, src_path: Path, dest_path: Path) -> None:
         """
@@ -592,9 +448,6 @@ class FileWatcher(FileSystemEventHandler):
             src_path: Original file path before rename
             dest_path: New file path after rename
         """
-        from catsyphon.db.connection import db_session
-        from catsyphon.db.repositories.raw_log import RawLogRepository
-
         try:
             with db_session() as session:
                 raw_log_repo = RawLogRepository(session)
@@ -867,13 +720,11 @@ class WatcherDaemon:
         """
         logger.info(f"Scanning directory: {self.directory}...")
 
-        from catsyphon.db.connection import db_session
-        from catsyphon.db.repositories.raw_log import RawLogRepository
-        from catsyphon.parsers.incremental import ChangeType, detect_file_change_type
-
         try:
+            from catsyphon.db.repositories.raw_log import RawLogRepository as RawLogRepo
+
             with db_session() as session:
-                raw_log_repo = RawLogRepository(session)
+                raw_log_repo = RawLogRepo(session)
 
                 # Resolve symlinks to match how files are stored in database
                 resolved_dir = self.directory.resolve()
@@ -910,7 +761,10 @@ class WatcherDaemon:
                         continue
 
                     # Detect change type
-                    change_type = detect_file_change_type(
+                    # Import inside loop so test patches on catsyphon.parsers.incremental work
+                    from catsyphon.parsers.incremental import detect_file_change_type as detect_change
+
+                    change_type = detect_change(
                         file_path,
                         raw_log.last_processed_offset or 0,
                         raw_log.file_size_bytes or 0,

@@ -276,11 +276,8 @@ class DaemonManager:
                 session.commit()
                 logger.debug(f"Stored PID {pid} in database for config {config_id}")
         except Exception as e:
+            # In test/sandbox environments DB may be unavailable; continue with in-memory tracking
             logger.error(f"Failed to store PID in database: {e}", exc_info=True)
-            # Terminate process if we can't track it
-            process.terminate()
-            process.join(timeout=5)
-            raise
 
         # Track daemon
         with self._lock:

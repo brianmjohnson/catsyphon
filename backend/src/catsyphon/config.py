@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 def get_xdg_cache_dir() -> str:
@@ -75,10 +76,31 @@ class Settings(BaseSettings):
     postgres_password: str = "catsyphon_dev_password"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    database_url_override: str | None = Field(
+        default=None, alias="DATABASE_URL"
+    )  # Optional direct override
 
     @property
     def database_url(self) -> str:
         """Construct database URL from components."""
+        default_values = (
+            "catsyphon",
+            "catsyphon",
+            "catsyphon_dev_password",
+            "localhost",
+            5432,
+        )
+        postgres_overridden = (
+            self.postgres_db,
+            self.postgres_user,
+            self.postgres_password,
+            self.postgres_host,
+            self.postgres_port,
+        ) != default_values
+
+        if self.database_url_override and not postgres_overridden:
+            return self.database_url_override
+
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

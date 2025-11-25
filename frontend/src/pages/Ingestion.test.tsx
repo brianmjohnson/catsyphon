@@ -428,6 +428,7 @@ describe('Ingestion', () => {
         messages_added: 50,
         incremental: false,
         error_message: null,
+        ingest_mode: 'replace',
       },
     ];
 
@@ -581,6 +582,7 @@ describe('Ingestion', () => {
         messages_added: 50,
         incremental: false,
         error_message: null,
+        ingest_mode: 'replace',
       },
       {
         id: 'job-2',
@@ -595,6 +597,7 @@ describe('Ingestion', () => {
         messages_added: 0,
         incremental: false,
         error_message: 'Parse error',
+        ingest_mode: 'append',
       },
     ];
 

@@ -2,7 +2,16 @@
 Tests for configuration management.
 """
 
+import pytest
+
 from catsyphon.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def clear_database_url_env(monkeypatch):
+    """Ensure DATABASE_URL override doesn't affect config unit tests."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    yield
 
 
 class TestSettings:

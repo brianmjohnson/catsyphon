@@ -49,8 +49,14 @@ def ingest(
     from catsyphon.config import settings
     from catsyphon.parsers import get_default_registry
 
-    # Initialize logging
-    setup_logging(context="cli")
+    # Initialize logging (fallback to console if file logging not permitted)
+    try:
+        setup_logging(context="cli")
+    except PermissionError:
+        # Basic logging to stdout
+        import logging
+
+        logging.basicConfig(level=logging.INFO)
 
     # Handle --force flag and deprecation warning
     if force:
@@ -131,45 +137,30 @@ def ingest(
         console.print("[yellow]No log files found to process[/yellow]")
         raise typer.Exit(0)
 
-    console.print(f"Found {len(files_to_process)} log(s) to process\n")
+    console.print(f"Found {len(files_to_process)} conversational log(s) to process\n")
 
     # Process files
     successful = 0
     failed = 0
+    skipped = 0
 
     for log_file in files_to_process:
         try:
-            console.print(f"[blue]Parsing:[/blue] {log_file.name}... ", end="")
+            console.print(f"[blue]Ingesting:[/blue] {log_file.name}... ", end="")
 
-            # Parse the file with timing
-            import time
-
-            parse_start_ms = time.time() * 1000
-            conversation = registry.parse(log_file)
-            parse_duration_ms = (time.time() * 1000) - parse_start_ms
-
-            # Build parse metrics
-            parse_metrics = {
-                "parse_duration_ms": parse_duration_ms,
-                "parse_method": "full",
-                "parse_messages_count": len(conversation.messages),
-            }
-
-            console.print(
-                f"[green]✓[/green] "
-                f"{len(conversation.messages)} messages, "
-                f"{sum(len(m.tool_calls) for m in conversation.messages)} tool calls"
-            )
-
-            # Run tagging if enabled
+            # Run tagging if enabled (pre-parse for tagging only to avoid double LLM work)
             tags = None
             llm_metrics = None
             tagging_duration_ms = None
+            parsed_for_tags = None
             if tagging_pipeline:
                 console.print("  [cyan]Tagging...[/cyan] ", end="")
                 try:
                     tagging_start_ms = time.time() * 1000
-                    tags, llm_metrics = tagging_pipeline.tag_conversation(conversation)
+                    parsed_for_tags = registry.parse(log_file)
+                    tags, llm_metrics = tagging_pipeline.tag_conversation(
+                        parsed_for_tags
+                    )
                     tagging_duration_ms = (time.time() * 1000) - tagging_start_ms
                     console.print(
                         f"[green]✓[/green] ({tagging_duration_ms:.0f}ms) "
@@ -183,45 +174,66 @@ def ingest(
                     llm_metrics = None
                     tagging_duration_ms = None
 
-            # Merge LLM metrics and tagging duration into parse metrics
-            combined_metrics = parse_metrics.copy()
-            if llm_metrics:
-                combined_metrics.update(llm_metrics)
-            if tagging_duration_ms is not None:
-                combined_metrics["tagging_duration_ms"] = tagging_duration_ms
-
             # Store to database (unless dry-run)
             if not dry_run:
                 from catsyphon.db.connection import db_session
                 from catsyphon.exceptions import DuplicateFileError
-                from catsyphon.pipeline.ingestion import ingest_conversation
+                from catsyphon.pipeline.orchestrator import ingest_log_file
 
                 try:
                     with db_session() as session:
-                        db_conversation = ingest_conversation(
+                        outcome = ingest_log_file(
                             session=session,
-                            parsed=conversation,
+                            file_path=log_file,
+                            registry=registry,
                             project_name=project,
                             developer_username=developer,
-                            file_path=log_file,
                             tags=tags,
                             skip_duplicates=skip_duplicates,
                             update_mode=update_mode,
-                            parse_metrics=combined_metrics,
+                            source_type="cli",
+                            source_config_id=None,
+                            created_by=None,
+                            enable_incremental=True,
                         )
                         session.commit()
-                        console.print(
-                            f"  [green]✓ Stored[/green] "
-                            f"conversation={db_conversation.id}"
+                        status_label = outcome.status
+                        if status_label in {"duplicate", "skipped"}:
+                            color = "yellow"
+                        else:
+                            color = "green"
+
+                        verb = "Stored" if status_label == "success" else status_label
+                        conv_id = outcome.conversation_id or (
+                            outcome.conversation.id if outcome.conversation else None
                         )
+                        if conv_id:
+                            console.print(
+                                f"  [{color}]✓ {verb}[/{color}] "
+                                f"conversation={conv_id}"
+                            )
+                        else:
+                            console.print(f"  [{color}]✓ {verb}[/{color}]")
+
+                    if outcome.status in {"duplicate", "skipped"}:
+                        skipped += 1
+                    else:
+                        successful += 1
                 except DuplicateFileError as dup_error:
                     console.print(f"  [yellow]⊘ Duplicate:[/yellow] {dup_error}")
-                    raise  # Re-raise to count as failed
+                    skipped += 1
                 except Exception as db_error:
                     console.print(f"  [red]✗ DB Error:[/red] {str(db_error)}")
-                    raise  # Re-raise to count as failed
-
-            successful += 1
+                    failed += 1
+            else:
+                # Dry-run parse to validate content and surface skips
+                try:
+                    registry.parse_with_metadata(log_file)
+                    console.print("  [green]✓ Parsed[/green] (dry-run)")
+                    successful += 1
+                except Exception as parse_error:
+                    console.print(f"  [yellow]Skipped:[/yellow] {parse_error}")
+                    skipped += 1
 
         except Exception as e:
             console.print(f"[red]✗[/red] {str(e)}")
@@ -254,6 +266,7 @@ def ingest(
     console.print()
     console.print("[bold]Summary:[/bold]")
     console.print(f"  Successful: {successful}")
+    console.print(f"  Skipped: {skipped}")
     console.print(f"  Failed: {failed}")
 
     if failed > 0:
