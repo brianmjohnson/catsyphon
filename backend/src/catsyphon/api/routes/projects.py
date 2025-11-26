@@ -5,6 +5,7 @@ Endpoints for project-level statistics, sessions, and file aggregations.
 """
 
 from collections import defaultdict
+from dataclasses import asdict
 from typing import Any, Optional
 from uuid import UUID
 
@@ -25,6 +26,7 @@ from catsyphon.api.schemas import (
     ImpactMetrics,
     InfluenceFlow,
     ErrorBucket,
+    ThinkingTimeStats,
 )
 from catsyphon.db.connection import get_db
 from catsyphon.db.repositories import (
@@ -32,6 +34,12 @@ from catsyphon.db.repositories import (
     ProjectRepository,
     WorkspaceRepository,
 )
+from catsyphon.analytics.thinking_time import (
+    aggregate_thinking_time,
+    pair_user_assistant,
+)
+from catsyphon.analytics.cache import PROJECT_ANALYTICS_CACHE
+_THINKING_TIME_MAX_LATENCY_SECONDS = 2 * 60 * 60  # 2 hours
 from catsyphon.models.db import (
     Conversation,
     Developer,
@@ -304,6 +312,11 @@ async def get_project_analytics(
     from datetime import datetime, timedelta
     import statistics
 
+    # Cache lookup
+    cached = PROJECT_ANALYTICS_CACHE.get(project_id, date_range)
+    if cached:
+        return cached
+
     project_repo = ProjectRepository(session)
     project = project_repo.get(project_id)
     if not project:
@@ -357,6 +370,7 @@ async def get_project_analytics(
     impact_lines_total = 0
     impact_sessions = 0
     first_change_latencies: list[float] = []
+    all_thinking_pairs = []
 
     conversation_lookup = {c.id: c for c in conversations}
 
@@ -413,6 +427,9 @@ async def get_project_analytics(
         assistant_ratio = assistant_msgs / total_msgs if total_msgs else 0.5
         role = _classify_role_dynamics(assistant_ratio, assistant_tool_calls, user_tool_calls)
         role_counts[role] += 1
+
+        # Thinking-time pairs
+        all_thinking_pairs.extend(pair_user_assistant(conv_msgs))
 
         # Handoff stats
         if conv.parent_conversation_id:
@@ -565,7 +582,7 @@ async def get_project_analytics(
         for agent, scores in sentiment_rollup.items()
     ]
 
-    return ProjectAnalytics(
+    result = ProjectAnalytics(
         project_id=project_id,
         date_range=date_range,
         pairing_top=pairing_top,
@@ -586,7 +603,19 @@ async def get_project_analytics(
         sentiment_by_agent=sentiment_by_agent,
         influence_flows=influence_flows,
         error_heatmap=error_heatmap,
+        thinking_time=ThinkingTimeStats(
+            **asdict(
+                aggregate_thinking_time(
+                    all_thinking_pairs,
+                    max_latency_seconds=_THINKING_TIME_MAX_LATENCY_SECONDS,
+                )
+            )
+        ),
     )
+
+    # Cache set
+    PROJECT_ANALYTICS_CACHE.set(project_id, date_range, result)
+    return result
 
 
 @router.get("/{project_id}/sessions", response_model=list[ProjectSession])
