@@ -450,8 +450,15 @@ function AnalyticsTab({ projectId }: { projectId: string }) {
     );
   }
 
-  const { pairing_top, pairing_bottom, role_dynamics, handoffs, impact, sentiment_by_agent } =
-    analytics;
+  const {
+    pairing_top,
+    pairing_bottom,
+    role_dynamics,
+    handoffs,
+    impact,
+    sentiment_by_agent,
+    thinking_time,
+  } = analytics;
   const { influence_flows, error_heatmap } = analytics;
 
   const renderPairList = (pairs: ProjectAnalytics['pairing_top'], tone: 'good' | 'bad') => (
@@ -534,7 +541,7 @@ function AnalyticsTab({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="bg-card border border-border rounded-lg p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -625,6 +632,68 @@ function AnalyticsTab({ projectId }: { projectId: string }) {
               <span className="font-semibold">{impact.total_lines_changed}</span>
             </div>
           </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Clock className="w-4 h-4 text-blue-300" />
+            <h3 className="text-lg font-semibold">Thinking Time</h3>
+          </div>
+          {thinking_time ? (
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Median</span>
+                <span className="font-semibold">
+                  {thinking_time.median_latency_seconds !== null &&
+                  thinking_time.median_latency_seconds !== undefined
+                    ? `${thinking_time.median_latency_seconds.toFixed(1)}s`
+                    : '–'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">P95</span>
+                <span className="font-semibold">
+                  {thinking_time.p95_latency_seconds !== null &&
+                  thinking_time.p95_latency_seconds !== undefined
+                    ? `${thinking_time.p95_latency_seconds.toFixed(1)}s`
+                    : '–'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Max</span>
+                <span className="font-semibold">
+                  {thinking_time.max_latency_seconds !== null &&
+                  thinking_time.max_latency_seconds !== undefined
+                    ? `${thinking_time.max_latency_seconds.toFixed(1)}s`
+                    : '–'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">% with thinking</span>
+                <span className="font-semibold">
+                  {thinking_time.pct_with_thinking !== null &&
+                  thinking_time.pct_with_thinking !== undefined
+                    ? `${Math.round(thinking_time.pct_with_thinking * 100)}%`
+                    : '–'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">% with tool calls</span>
+                <span className="font-semibold">
+                  {thinking_time.pct_with_tool_calls !== null &&
+                  thinking_time.pct_with_tool_calls !== undefined
+                    ? `${Math.round(thinking_time.pct_with_tool_calls * 100)}%`
+                    : '–'}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Pairs</span>
+                <span>{thinking_time.pair_count}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">No thinking-time data.</p>
+          )}
         </div>
       </div>
 

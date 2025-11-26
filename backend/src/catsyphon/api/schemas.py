@@ -109,6 +109,17 @@ class ErrorBucket(BaseModel):
     count: int
 
 
+class ThinkingTimeStats(BaseModel):
+    """Approximate thinking-time metrics derived from user→assistant latency."""
+
+    pair_count: int = 0
+    median_latency_seconds: Optional[float] = None
+    p95_latency_seconds: Optional[float] = None
+    max_latency_seconds: Optional[float] = None
+    pct_with_thinking: Optional[float] = None
+    pct_with_tool_calls: Optional[float] = None
+
+
 class ProjectAnalytics(BaseModel):
     """Advanced analytics for a project."""
 
@@ -122,6 +133,7 @@ class ProjectAnalytics(BaseModel):
     sentiment_by_agent: list[SentimentByAgent] = Field(default_factory=list)
     influence_flows: list[InfluenceFlow] = Field(default_factory=list)
     error_heatmap: list[ErrorBucket] = Field(default_factory=list)
+    thinking_time: Optional[ThinkingTimeStats] = None
 
 
 class ProjectStats(BaseModel):

@@ -12,6 +12,7 @@ from typing import Optional
 from uuid import UUID
 
 import catsyphon.pipeline.ingestion as ingestion_module
+from catsyphon.analytics.cache import PROJECT_ANALYTICS_CACHE
 from catsyphon.db.repositories import ConversationRepository, RawLogRepository
 from catsyphon.exceptions import DuplicateFileError
 from catsyphon.models.db import Conversation
@@ -157,6 +158,19 @@ def ingest_log_file(
         if change_type == ChangeType.APPEND:
             incremental_parser = registry.find_incremental_parser(file_path)
             if incremental_parser:
+                # If this file was previously parsed, ensure the incremental parser matches
+                # the original agent/parser type to avoid mis-matched parsers (e.g., Claude
+                # incremental parser claiming a Codex log).
+                parser_meta = getattr(incremental_parser, "metadata", None)
+                if (
+                    existing_raw_log
+                    and existing_raw_log.agent_type
+                    and parser_meta
+                    and parser_meta.name != existing_raw_log.agent_type
+                ):
+                    incremental_parser = None
+
+            if incremental_parser:
                 parse_start = time.time() * 1000
                 inc_result = incremental_parser.parse_incremental(
                     file_path,
@@ -164,7 +178,6 @@ def ingest_log_file(
                     existing_raw_log.last_processed_line,
                 )
                 parse_duration_ms = (time.time() * 1000) - parse_start
-                parser_meta = getattr(incremental_parser, "metadata", None)
                 parse_metrics = {
                     "parse_method": "incremental",
                     "parse_change_type": change_type.value,
@@ -187,6 +200,8 @@ def ingest_log_file(
                     stage_metrics=metrics,
                     stage_metadata=metrics_metadata,
                 )
+                if conversation and conversation.project_id:
+                    PROJECT_ANALYTICS_CACHE.invalidate(conversation.project_id)
                 return IngestOutcome(
                     conversation=conversation,
                     conversation_id=conversation.id if conversation else None,
@@ -235,6 +250,9 @@ def ingest_log_file(
         stage_metrics=metrics,
         stage_metadata=metrics_metadata,
     )
+
+    if conversation and conversation.project_id:
+        PROJECT_ANALYTICS_CACHE.invalidate(conversation.project_id)
 
     return IngestOutcome(
         conversation=conversation,

@@ -419,6 +419,15 @@ export interface ErrorBucket {
   count: number;
 }
 
+export interface ThinkingTimeStats {
+  pair_count: number;
+  median_latency_seconds?: number | null;
+  p95_latency_seconds?: number | null;
+  max_latency_seconds?: number | null;
+  pct_with_thinking?: number | null;
+  pct_with_tool_calls?: number | null;
+}
+
 export interface ProjectAnalytics {
   project_id: string;
   date_range?: string | null;
@@ -430,6 +439,7 @@ export interface ProjectAnalytics {
   sentiment_by_agent: SentimentByAgent[];
   influence_flows: InfluenceFlow[];
   error_heatmap: ErrorBucket[];
+  thinking_time?: ThinkingTimeStats | null;
 }
 
 export interface ProjectSession {
