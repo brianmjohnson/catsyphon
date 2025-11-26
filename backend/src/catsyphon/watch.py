@@ -45,9 +45,13 @@ from catsyphon.parsers.incremental import ChangeType, detect_file_change_type
 from catsyphon.parsers.registry import get_default_registry
 from catsyphon.db.repositories.raw_log import RawLogRepository
 from catsyphon.pipeline.orchestrator import ingest_log_file
+
 # Backwards-compatible alias for tests/older imports
 ingest_conversation = ingest_log_file
-from catsyphon.pipeline.ingestion import link_orphaned_agents, _get_or_create_default_workspace
+from catsyphon.pipeline.ingestion import (
+    link_orphaned_agents,
+    _get_or_create_default_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ def retry_on_deadlock(max_retries: int = 3, delay_ms: int = 100):
         max_retries: Maximum number of retry attempts
         delay_ms: Delay between retries in milliseconds
     """
+
     def decorator(func):
         def wrapper(*args, **kwargs):
             for attempt in range(max_retries):
@@ -77,7 +82,9 @@ def retry_on_deadlock(max_retries: int = 3, delay_ms: int = 100):
                     raise
             # This should never be reached due to raise above, but for type safety:
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -360,7 +367,9 @@ class FileWatcher(FileSystemEventHandler):
                                 with self._stats_lock:
                                     self.stats.files_skipped += 1
                                     self.stats.last_activity = datetime.now()
-                                logger.debug(f"No changes detected for {file_path.name}, skipping")
+                                logger.debug(
+                                    f"No changes detected for {file_path.name}, skipping"
+                                )
                                 return
                 except Exception as e:
                     logger.debug(
@@ -369,6 +378,24 @@ class FileWatcher(FileSystemEventHandler):
 
             # Use unified orchestrator for ingest
             try:
+                # Run tagging if pipeline is configured
+                tags = None
+                if self.tagging_pipeline:
+                    try:
+                        parsed_for_tags = self.parser_registry.parse(file_path)
+                        tags, _llm_metrics = self.tagging_pipeline.tag_conversation(
+                            parsed_for_tags
+                        )
+                        logger.debug(
+                            f"Tagged {file_path.name}: intent={tags.get('intent')}, "
+                            f"sentiment={tags.get('sentiment')}"
+                        )
+                    except Exception as tag_error:
+                        logger.warning(
+                            f"Tagging failed for {file_path.name}: {tag_error}"
+                        )
+                        tags = None  # Continue without tags
+
                 with db_session() as session:
                     outcome = ingest_conversation(
                         session=session,
@@ -376,7 +403,7 @@ class FileWatcher(FileSystemEventHandler):
                         registry=self.parser_registry,
                         project_name=self.project_name,
                         developer_username=self.developer_username,
-                        tags=None,
+                        tags=tags,
                         skip_duplicates=True,
                         update_mode="skip",
                         source_type="watch",
@@ -456,9 +483,7 @@ class FileWatcher(FileSystemEventHandler):
                 raw_log = raw_log_repo.get_by_file_path(str(src_path))
 
                 if raw_log:
-                    logger.info(
-                        f"File renamed: {src_path.name} → {dest_path.name}"
-                    )
+                    logger.info(f"File renamed: {src_path.name} → {dest_path.name}")
                     # Update to new path
                     raw_log.file_path = str(dest_path)
                     session.commit()
@@ -697,7 +722,9 @@ class WatcherDaemon:
                         self.stats_queue.put_nowait(stats_snapshot)
                         logger.debug(f"Pushed stats to queue: {stats_snapshot}")
                     except Exception as e:
-                        logger.error(f"Failed to push stats to queue: {e}", exc_info=True)
+                        logger.error(
+                            f"Failed to push stats to queue: {e}", exc_info=True
+                        )
 
             except Exception as e:
                 logger.error(f"Error in stats push loop: {e}", exc_info=True)
@@ -762,7 +789,9 @@ class WatcherDaemon:
 
                     # Detect change type
                     # Import inside loop so test patches on catsyphon.parsers.incremental work
-                    from catsyphon.parsers.incremental import detect_file_change_type as detect_change
+                    from catsyphon.parsers.incremental import (
+                        detect_file_change_type as detect_change,
+                    )
 
                     change_type = detect_change(
                         file_path,
