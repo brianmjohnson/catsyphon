@@ -118,7 +118,7 @@ class InsightsGenerator:
 
             canonical = canonical_repo.get_or_generate(
                 conversation=conversation,
-                canonical_type="insights",
+                canonical_type=CanonicalType.INSIGHTS,
                 canonicalizer=canonicalizer,
                 regeneration_threshold_tokens=2000,
                 children=children or [],
@@ -242,5 +242,17 @@ class InsightsGenerator:
             "technical_debt_indicators": [],
             "testing_behavior": "unknown",
             "summary": "Insights generation failed. Please try again.",
-            "quantitative_metrics": {},
+            "quantitative_metrics": {
+                "message_count": 0,
+                "epoch_count": 0,
+                "files_touched_count": 0,
+                "tool_calls_count": 0,
+                "token_count": 0,
+                "has_errors": False,
+                "tools_used": [],
+                "child_conversations_count": 0,
+                "duration_seconds": None,
+            },
+            "canonical_version": 0,
+            "analysis_timestamp": time.time(),
         }
