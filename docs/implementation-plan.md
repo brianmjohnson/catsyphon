@@ -1,25 +1,63 @@
 # CatSyphon Implementation Plan
 
 **Project**: Coding Agent Conversation Analysis Tool
-**Version**: 1.0
-**Last Updated**: 2025-10-30
+**Version**: 2.0
+**Last Updated**: 2025-11-26
 
 ## Executive Summary
 
-CatSyphon is a tool for parsing, analyzing, and extracting insights from coding agent conversation logs. The tool will parse logs from multiple coding agents (starting with Claude Code), enrich them with AI-generated metadata, and provide analytics dashboards for engineering managers, product teams, and AI researchers.
+CatSyphon is a full-stack application for parsing, analyzing, and extracting insights from AI coding assistant conversation logs. The tool parses logs from multiple coding agents (starting with Claude Code), enriches them with AI-generated metadata, and provides analytics dashboards for engineering managers, product teams, and AI researchers.
+
+**Current Status**: Phases 1-3 complete. Core platform operational with parsing, tagging, web UI, canonicalization, and insights.
+
+---
 
 ## Project Phases Overview
 
-### Phase 1: Data Foundation & Processing Pipeline (Current)
-Build robust parsing, metadata enrichment, and storage infrastructure.
+```mermaid
+gantt
+    title CatSyphon Development Phases
+    dateFormat  YYYY-MM
+    section Foundation
+    Phase 1 - Data Pipeline      :done, p1, 2025-01, 2025-02
+    section Analytics
+    Phase 2 - Web Dashboard      :done, p2, 2025-02, 2025-04
+    section Advanced
+    Phase 3 - Canonicalization   :done, p3, 2025-10, 2025-11
+    Phase 3 - Insights System    :done, p3b, 2025-11, 2025-11
+    section Future
+    Phase 4 - Semantic Search    :active, p4, 2025-12, 2026-02
+    Phase 5 - Natural Language   : p5, 2026-02, 2026-04
+```
 
-### Phase 2: Core Analytics Dashboards
-High-level insights for managers and researchers - overview, agent performance, developer patterns, and conversation explorer.
+### Phase 1: Data Foundation & Processing Pipeline ✅ COMPLETE
+Robust parsing, metadata enrichment, and storage infrastructure.
+- Plugin-based parser system with auto-detection
+- Incremental parsing (10x-106x faster)
+- Hash-based deduplication
+- Live directory watching daemon
+- AI-powered tagging with caching
 
-### Phase 3: Developer-Centric Features
-Feature tracking, semantic search, and query templates for developers and PMs.
+### Phase 2: Core Analytics Dashboards ✅ COMPLETE
+Web interface with project analytics and conversation exploration.
+- React 19 + TypeScript frontend
+- Project-level analytics with sentiment timelines
+- Session filtering and search
+- Real-time polling (15s intervals)
+- Watch directory management UI
 
-### Phase 4: Natural Language Interface (Future)
+### Phase 3: Canonicalization & Insights ✅ COMPLETE
+LLM-optimized conversation representation and comprehensive insights.
+- Intelligent message sampling within token budgets
+- Play-format narrative generation
+- 60+ insights across 6 categories
+- Hierarchical context preservation
+- 50%+ tagging latency reduction
+
+### Phase 4: Semantic Search (Future)
+Natural language queries across conversations using pgvector.
+
+### Phase 5: Natural Language Interface (Future)
 Conversational UI for asking questions about the data.
 
 ---
@@ -837,206 +875,244 @@ class CatSyphonClient:
 ## Technology Stack
 
 ### Project Structure
-- **Architecture**: Monorepo
+- **Architecture**: Monorepo (backend + frontend)
 - **Repository**: GitHub
 - **CI/CD**: GitHub Actions
-- **Deployment**: GCP or AWS (TBD)
-- **Containers**: Docker + Docker Compose
+- **Containers**: Docker + Docker Compose (PostgreSQL)
+- **Issue Tracking**: bd (beads) - dependency-aware task management
 
-### Backend (Phase 1)
-- **Language**: Python 3.11+
-- **Framework**: FastAPI (API), SQLAlchemy (ORM)
-- **Database**: PostgreSQL 15+ (with pgvector for Phase 3)
-- **LLM**: OpenAI gpt-4o-mini (primary for all tagging)
-- **Testing**: pytest, pytest-asyncio
-- **CLI**: Typer
-- **Migrations**: Alembic
-- **Package Manager**: uv (already configured)
+### Backend (Implemented)
+| Component | Technology | Version |
+|-----------|------------|---------|
+| Language | Python | 3.11+ |
+| Framework | FastAPI | Latest |
+| ORM | SQLAlchemy | 2.0+ (async) |
+| Database | PostgreSQL | 15+ |
+| Migrations | Alembic | Latest |
+| LLM | OpenAI | gpt-4o-mini |
+| Testing | pytest + pytest-asyncio | Latest |
+| CLI | Typer + Rich | Latest |
+| Package Manager | uv | Latest |
 
-### Frontend (Phase 2)
-- **Framework**: React 18+
-- **Language**: TypeScript 5+
-- **Build Tool**: Vite
-- **Package Manager**: pnpm
-- **UI Components**: shadcn/ui (built on Radix UI)
-- **Styling**: Tailwind CSS v4
-- **Charts**: Tremor (dashboard-focused, built on Recharts)
-- **Data Fetching**: TanStack Query (React Query)
-- **Routing**: React Router
-- **Form Handling**: React Hook Form + Zod
-
-### Dependencies (pyproject.toml)
-```toml
-[project]
-name = "catsyphon"
-version = "0.1.0"
-requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "sqlalchemy>=2.0.0",
-    "psycopg2-binary>=2.9.0",
-    "alembic>=1.12.0",
-    "openai>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "typer>=0.9.0",
-    "httpx>=0.25.0",
-    "python-dateutil>=2.8.0",
-    "tqdm>=4.66.0",
-    "rich>=13.0.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.6.0",
-]
-
-[project.scripts]
-catsyphon = "catsyphon.cli:app"
+**Backend Modules:**
+```
+catsyphon/
+├── api/              # FastAPI REST endpoints
+├── parsers/          # Plugin-based log parsers
+├── canonicalization/ # LLM-optimized representation
+├── tagging/          # AI metadata enrichment
+├── pipeline/         # ETL ingestion workflow
+├── db/               # SQLAlchemy ORM + repositories
+├── models/           # Data models (DB + Pydantic)
+├── watch.py          # Directory monitoring daemon
+├── cli.py            # Typer CLI
+└── config.py         # Pydantic Settings
 ```
 
-### Frontend Dependencies (package.json)
-```json
-{
-  "name": "catsyphon-frontend",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.20.0",
-    "@tanstack/react-query": "^5.0.0",
-    "@tremor/react": "^3.0.0",
-    "tailwindcss": "^4.0.0",
-    "clsx": "^2.0.0",
-    "class-variance-authority": "^0.7.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.2.0",
-    "typescript": "^5.3.0",
-    "vite": "^5.0.0"
-  }
-}
+### Frontend (Implemented)
+| Component | Technology | Version |
+|-----------|------------|---------|
+| Framework | React | 19 |
+| Language | TypeScript | 5.9 |
+| Build Tool | Vite | 7 |
+| Package Manager | pnpm | Latest |
+| UI Components | shadcn/ui | Latest |
+| Styling | Tailwind CSS | 4 |
+| Charts | Recharts | Latest |
+| Data Fetching | TanStack Query | 5 |
+| Routing | React Router DOM | 7 |
+
+**Frontend Pages:**
+```
+pages/
+├── Dashboard.tsx          # System overview
+├── ProjectList.tsx        # All projects
+├── ProjectDetail.tsx      # Project analytics
+├── ConversationList.tsx   # Search & filter
+├── ConversationDetail.tsx # Message viewer
+├── Ingestion.tsx          # Upload & watch management
+├── FailedSessions.tsx     # Error analysis
+└── Setup.tsx              # Onboarding wizard
 ```
 
-### Development Tools
-- **Formatter (Python)**: Black
-- **Linter (Python)**: Ruff
-- **Type Checker (Python)**: mypy
-- **Formatter (TypeScript)**: Prettier
-- **Linter (TypeScript)**: ESLint
-- **Environment Manager**: mise
-- **Database**: PostgreSQL via Docker Compose
+### Code Quality Tools
+| Purpose | Python | TypeScript |
+|---------|--------|------------|
+| Formatter | Black | Prettier |
+| Linter | Ruff | ESLint |
+| Type Checker | mypy (strict) | TypeScript |
+| Testing | pytest | Vitest |
+
+### Test Coverage
+- **Backend**: 1,062 tests (84% coverage)
+- **Frontend**: 283 tests
+- **Total**: 1,345+ tests
 
 ---
 
 ## Project Structure
 
+```mermaid
+graph TB
+    subgraph "Monorepo Root"
+        ROOT[catsyphon/]
+    end
+
+    subgraph "Backend"
+        BE[backend/]
+        BE_SRC[src/catsyphon/]
+        BE_TESTS[tests/]
+    end
+
+    subgraph "Backend Modules"
+        API[api/]
+        PARSERS[parsers/]
+        CANON[canonicalization/]
+        TAG[tagging/]
+        PIPE[pipeline/]
+        DB[db/]
+        MODELS[models/]
+    end
+
+    subgraph "Frontend"
+        FE[frontend/]
+        FE_SRC[src/]
+        PAGES[pages/]
+        COMP[components/]
+    end
+
+    subgraph "Documentation"
+        DOCS[docs/]
+    end
+
+    ROOT --> BE
+    ROOT --> FE
+    ROOT --> DOCS
+
+    BE --> BE_SRC
+    BE --> BE_TESTS
+
+    BE_SRC --> API
+    BE_SRC --> PARSERS
+    BE_SRC --> CANON
+    BE_SRC --> TAG
+    BE_SRC --> PIPE
+    BE_SRC --> DB
+    BE_SRC --> MODELS
+
+    FE --> FE_SRC
+    FE_SRC --> PAGES
+    FE_SRC --> COMP
+
+    style CANON fill:#90EE90
+    style TAG fill:#FFB6C1
+    style PAGES fill:#DDA0DD
+```
+
 ```
 catsyphon/                      # Monorepo root
 ├── .beads/                     # Beads issue tracking
-├── .github/
-│   └── workflows/              # GitHub Actions CI/CD
-│       ├── backend-tests.yml
-│       └── frontend-build.yml
-├── .mise.toml                  # Development environment config
-├── docs/                       # Documentation
-│   └── implementation-plan.md
-├── docker-compose.yml          # PostgreSQL and services
-├── .env.example                # Environment variables template
-├── README.md
-├── AGENTS.md
-├── CLAUDE.md
+├── .mise.toml                  # Tool version management
+├── docker-compose.yml          # PostgreSQL container
+├── .env.example                # Environment template
+├── README.md                   # Quick start guide
+├── ARCHITECTURE.md             # System architecture
+├── AGENTS.md                   # Issue tracking workflow
+├── CLAUDE.md                   # AI agent instructions
 │
-├── backend/                    # Python backend
-│   ├── src/
-│   │   └── catsyphon/
-│   │       ├── __init__.py
-│   │       ├── cli.py          # CLI entrypoint
-│   │       ├── parsers/        # Log parsers
-│   │       │   ├── __init__.py
-│   │       │   ├── base.py
-│   │       │   ├── claude_code.py
-│   │       │   └── registry.py
-│   │       ├── tagging/        # Tagging engine
-│   │       │   ├── __init__.py
-│   │       │   ├── base.py
-│   │       │   ├── llm_tagger.py
-│   │       │   ├── rule_tagger.py
-│   │       │   └── pipeline.py
-│   │       ├── models/         # Data models
-│   │       │   ├── __init__.py
-│   │       │   ├── parsed.py   # Parsed conversation models
-│   │       │   └── db.py       # Database models (SQLAlchemy)
-│   │       ├── db/             # Database layer
-│   │       │   ├── __init__.py
-│   │       │   ├── connection.py
-│   │       │   ├── migrations/ # Alembic migrations
-│   │       │   └── repositories/
-│   │       ├── pipeline/       # Ingestion pipeline
-│   │       │   ├── __init__.py
-│   │       │   └── ingest.py
-│   │       ├── api/            # FastAPI application
-│   │       │   ├── __init__.py
-│   │       │   ├── app.py
-│   │       │   ├── routes/
-│   │       │   └── schemas.py
-│   │       └── sdk/            # Python SDK
-│   │           ├── __init__.py
-│   │           └── client.py
-│   ├── tests/                  # Backend tests
-│   │   ├── __init__.py
+├── backend/                    # Python backend (FastAPI)
+│   ├── src/catsyphon/
+│   │   ├── api/                # REST API
+│   │   │   ├── app.py          # FastAPI application
+│   │   │   ├── routes/         # Endpoint handlers
+│   │   │   │   ├── conversations.py
+│   │   │   │   ├── projects.py
+│   │   │   │   ├── stats.py
+│   │   │   │   ├── upload.py
+│   │   │   │   ├── watch.py
+│   │   │   │   ├── ingestion.py
+│   │   │   │   ├── canonical.py
+│   │   │   │   └── insights.py
+│   │   │   └── schemas.py      # Pydantic schemas
+│   │   │
+│   │   ├── parsers/            # Plugin-based log parsers
+│   │   │   ├── base.py         # Parser protocol
+│   │   │   ├── registry.py     # Auto-detection
+│   │   │   ├── claude_code.py  # Claude Code parser
+│   │   │   ├── incremental.py  # Incremental parsing
+│   │   │   └── metadata.py     # Parser metadata
+│   │   │
+│   │   ├── canonicalization/   # LLM-optimized representation
+│   │   │   ├── canonicalizer.py   # Main orchestrator
+│   │   │   ├── models.py          # Data models
+│   │   │   ├── samplers.py        # Sampling strategies
+│   │   │   ├── builders.py        # Narrative builders
+│   │   │   └── tokens.py          # Token management
+│   │   │
+│   │   ├── tagging/            # AI metadata enrichment
+│   │   │   ├── engine.py       # OpenAI integration
+│   │   │   ├── pipeline.py     # Tagging pipeline
+│   │   │   └── cache.py        # File-based cache
+│   │   │
+│   │   ├── pipeline/           # Ingestion & processing
+│   │   │   └── ingestion.py    # ETL with metrics
+│   │   │
+│   │   ├── db/                 # Database layer
+│   │   │   ├── connection.py   # Session management
+│   │   │   ├── migrations/     # Alembic migrations
+│   │   │   └── repositories/   # Data access layer
+│   │   │
+│   │   ├── models/             # Data models
+│   │   │   ├── db.py           # SQLAlchemy ORM
+│   │   │   └── parsed.py       # Pydantic schemas
+│   │   │
+│   │   ├── watch.py            # Directory monitoring
+│   │   ├── cli.py              # Typer CLI
+│   │   └── config.py           # Configuration
+│   │
+│   ├── tests/                  # Test suite (1,062 tests)
 │   │   ├── test_parsers/
+│   │   ├── test_canonicalization/
 │   │   ├── test_tagging/
-│   │   └── test_pipeline/
-│   ├── pyproject.toml          # Python dependencies
-│   ├── uv.lock                 # uv lock file
-│   └── alembic.ini             # Alembic configuration
+│   │   ├── test_api_*.py
+│   │   └── test_performance.py
+│   │
+│   └── pyproject.toml          # Dependencies (uv)
 │
-├── frontend/                   # React frontend (Phase 2)
-│   ├── src/
-│   │   ├── main.tsx            # App entrypoint
-│   │   ├── App.tsx
-│   │   ├── pages/              # Page components
-│   │   │   ├── Dashboard.tsx
-│   │   │   ├── Conversations.tsx
-│   │   │   └── Analytics.tsx
-│   │   ├── components/         # Reusable components
-│   │   │   ├── ui/             # shadcn/ui components
-│   │   │   ├── charts/         # Chart components
-│   │   │   └── layout/         # Layout components
-│   │   ├── lib/                # Utilities
-│   │   │   ├── api.ts          # API client
-│   │   │   └── utils.ts
-│   │   └── styles/
-│   │       └── globals.css     # Tailwind imports
-│   ├── public/
-│   ├── index.html
-│   ├── package.json
-│   ├── pnpm-lock.yaml
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.ts
-│   └── components.json         # shadcn/ui config
+├── frontend/                   # React frontend
+│   └── src/
+│       ├── pages/              # Page components
+│       │   ├── Dashboard.tsx
+│       │   ├── ProjectList.tsx
+│       │   ├── ProjectDetail.tsx
+│       │   ├── ConversationList.tsx
+│       │   ├── ConversationDetail.tsx
+│       │   ├── Ingestion.tsx
+│       │   ├── FailedSessions.tsx
+│       │   └── Setup.tsx
+│       │
+│       ├── components/         # Shared components
+│       │   ├── SentimentTimelineChart.tsx
+│       │   ├── ToolUsageChart.tsx
+│       │   ├── SessionTable.tsx
+│       │   └── SessionPagination.tsx
+│       │
+│       ├── lib/                # Utilities
+│       │   ├── api.ts          # API client
+│       │   └── queryClient.ts  # TanStack Query
+│       │
+│       └── types/              # TypeScript interfaces
+│
+├── docs/                       # Technical documentation
+│   ├── implementation-plan.md
+│   ├── incremental-parsing.md
+│   ├── canonicalization-architecture.md
+│   ├── insights-comprehensive-analysis.md
+│   ├── plugin-sdk.md
+│   ├── parser-quickstart.md
+│   └── api-reference.md
 │
 └── test-samples/               # Sample conversation logs
-    ├── claude-code/
-    │   ├── conversation-1.json
-    │   └── conversation-2.json
-    └── README.md
 ```
 
 ---

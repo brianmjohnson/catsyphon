@@ -42,6 +42,17 @@ graph LR
 3. **Analyze**: Explore data through interactive dashboards and charts
 4. **Optimize**: Make data-driven decisions about your development workflow
 
+### Quick Stats
+
+| Metric | Value | Description |
+|--------|-------|-------------|
+| Test Coverage | **1,345+ tests** | 84% backend coverage |
+| Parsing Speed | **10-106x faster** | Incremental parsing |
+| Memory Savings | **45-465x less** | Optimized for large logs |
+| Tagging Latency | **50%+ reduction** | Canonicalization caching |
+| Insights | **60+ metrics** | Across 6 categories |
+| API Cost Savings | **80-90%** | Through intelligent caching |
+
 ## Features
 
 ### Core Capabilities ✅
@@ -71,12 +82,26 @@ graph LR
 - **30-day cache** reduces costs by 80-90%
 - Powered by OpenAI GPT-4o-mini
 
+#### 🎭 Canonicalization System
+- **Intelligent message sampling** - Priority-based selection within token budgets
+- **50%+ faster tagging** through hierarchical caching
+- **Play-format narratives** - LLM-optimized theatrical representation
+- **Hierarchical context** - Parent/child conversation relationships preserved
+- **Multiple canonical types** - Tagging (8K), Insights (12K), Export (20K) token budgets
+
 #### 📊 Interactive Web Dashboard
 - **Project-level analytics** with sentiment timelines
 - **Session filtering** by developer, outcome, date range
 - **Tool usage charts** and file modification tracking
 - **Real-time updates** with 15-second polling
 - **Responsive design** with shadcn/ui components
+
+#### 📈 Comprehensive Insights (60+ Metrics)
+- **Session success analysis** - Success rates by project, developer, intent
+- **Developer experience tracking** - Sentiment trends and productivity indicators
+- **Tool usage patterns** - Agent behavior and effectiveness
+- **Code productivity** - Lines changed, files touched, quality metrics
+- **Error analysis** - Problem patterns and resolution tracking
 
 #### 🗄️ Production-Ready Storage
 - **PostgreSQL 15+** with optimized indexes
@@ -92,11 +117,11 @@ graph LR
 
 ### Coming Soon 🚀
 
-- 📊 **System-wide analytics** - Cross-project trends and executive dashboards
 - 🎯 **Agent comparison** - Compare effectiveness across different AI assistants
-- 🔍 **Semantic search** - Natural language queries across conversations
+- 🔍 **Semantic search** - Natural language queries across conversations (pgvector)
 - 📋 **Custom templates** - Pre-built and custom query templates
 - 🔔 **Alert system** - Automated pattern detection and notifications
+- 🔐 **Authentication** - JWT-based auth with role-based access control
 
 ## Parser Plugins
 
@@ -126,6 +151,7 @@ graph LR
 | Agent | Status | Parser |
 |-------|--------|--------|
 | **Claude Code** | ✅ Built-in | `ClaudeCodeParser` |
+| **OpenAI Codex** | ✅ Built-in | `CodexParser` |
 | **Cursor** | 🔌 Plugin | Create your own |
 | **GitHub Copilot** | 🔌 Plugin | Create your own |
 | **Google Gemini** | 🔌 Plugin | Create your own |
@@ -161,6 +187,78 @@ cp my_cursor_parser.py ~/.catsyphon/plugins/cursor-parser/
 # 2. CatSyphon auto-discovers and uses it!
 catsyphon ingest /path/to/cursor/logs --project "My Project"
 ```
+
+### Adding Incremental Parsing (10-106x Faster)
+
+For line-based formats (JSONL, logs), add incremental parsing support to dramatically improve performance:
+
+| Scenario | Speedup | Memory Savings |
+|----------|---------|----------------|
+| Small append (1→100 msgs) | **10x faster** | 45x less |
+| Medium log (10→1000 msgs) | **37x faster** | 45x less |
+| Large log (1→5000 msgs) | **106x faster** | 465x less |
+
+```python
+from catsyphon.parsers.incremental import (
+    IncrementalParser,
+    IncrementalParseResult,
+    calculate_partial_hash,
+)
+
+class CursorParser(IncrementalParser):
+    """Parser with incremental support."""
+
+    def can_parse(self, file_path: Path) -> bool:
+        # Your detection logic
+        return file_path.suffix == ".jsonl"
+
+    def parse(self, file_path: Path) -> ParsedConversation:
+        # Full parse (used for new files)
+        messages = []
+        with open(file_path) as f:
+            for line in f:
+                messages.append(self._parse_line(line))
+        return ParsedConversation(messages=messages, ...)
+
+    def supports_incremental(self, file_path: Path) -> bool:
+        """Return True for line-based formats."""
+        return self.can_parse(file_path)
+
+    def parse_incremental(
+        self,
+        file_path: Path,
+        last_offset: int,
+        last_line: int,
+    ) -> IncrementalParseResult:
+        """Parse only NEW content since last_offset."""
+        new_messages = []
+        current_offset = last_offset
+        current_line = last_line
+
+        with open(file_path, "rb") as f:
+            f.seek(last_offset)  # Jump to where we left off
+            for line in f:
+                current_line += 1
+                current_offset += len(line)
+                msg = self._parse_line(line.decode("utf-8"))
+                new_messages.append(msg)
+
+        return IncrementalParseResult(
+            new_messages=new_messages,
+            last_processed_offset=current_offset,
+            last_processed_line=current_line,
+            file_size_bytes=file_path.stat().st_size,
+            partial_hash=calculate_partial_hash(file_path, current_offset),
+        )
+```
+
+**How it works:**
+1. First parse: Full parse, stores state (offset, line number, hash)
+2. Subsequent parses: Detects changes (APPEND, TRUNCATE, REWRITE, UNCHANGED)
+3. If APPEND: Parses only new content from last offset
+4. If UNCHANGED: Skips processing entirely
+
+See [Incremental Parsing Guide](./docs/incremental-parsing.md) for details.
 
 ### Distribution
 
@@ -445,10 +543,13 @@ catsyphon/                      # Monorepo root
 │   │   │   ├── app.py          # FastAPI application
 │   │   │   └── routes/         # Endpoint handlers
 │   │   │       ├── conversations.py
-│   │   │       ├── projects.py    # Epic 7 analytics
+│   │   │       ├── projects.py    # Project analytics
 │   │   │       ├── stats.py
 │   │   │       ├── upload.py
-│   │   │       └── watch.py
+│   │   │       ├── watch.py
+│   │   │       ├── ingestion.py   # Pipeline management
+│   │   │       ├── canonical.py   # Canonicalization API
+│   │   │       └── insights.py    # Insights generation
 │   │   │
 │   │   ├── parsers/            # Plugin-based log parsers
 │   │   │   ├── base.py         # Parser protocol
@@ -457,8 +558,15 @@ catsyphon/                      # Monorepo root
 │   │   │   ├── incremental.py  # Incremental parsing logic
 │   │   │   └── metadata.py     # Parser metadata
 │   │   │
+│   │   ├── canonicalization/   # Conversation canonicalization
+│   │   │   ├── canonicalizer.py   # Main orchestrator
+│   │   │   ├── models.py          # Data models
+│   │   │   ├── samplers.py        # Message sampling strategies
+│   │   │   ├── builders.py        # Narrative format builders
+│   │   │   └── tokens.py          # Token counting/budgets
+│   │   │
 │   │   ├── pipeline/           # Ingestion & processing
-│   │   │   └── ingestion.py    # ETL pipeline
+│   │   │   └── ingestion.py    # ETL pipeline with metrics
 │   │   │
 │   │   ├── db/                 # Database layer
 │   │   │   ├── connection.py   # Session management
@@ -471,14 +579,16 @@ catsyphon/                      # Monorepo root
 │   │   │
 │   │   ├── tagging/            # AI enrichment
 │   │   │   ├── engine.py       # OpenAI integration
+│   │   │   ├── pipeline.py     # Tagging pipeline
 │   │   │   └── cache.py        # File-based cache
 │   │   │
 │   │   ├── watch.py            # Directory monitoring daemon
 │   │   ├── cli.py              # Typer CLI commands
 │   │   └── config.py           # Configuration (Pydantic Settings)
 │   │
-│   ├── tests/                  # Pytest test suite
+│   ├── tests/                  # Pytest test suite (1,062 tests)
 │   │   ├── test_parsers/       # Parser unit tests
+│   │   ├── test_canonicalization/  # Canonicalization tests
 │   │   ├── test_api_*.py       # API endpoint tests
 │   │   ├── test_pipeline.py    # Integration tests
 │   │   └── test_performance.py # Benchmark tests
@@ -490,13 +600,19 @@ catsyphon/                      # Monorepo root
 │       ├── pages/              # Page components
 │       │   ├── Dashboard.tsx         # System overview
 │       │   ├── ProjectList.tsx       # All projects
-│       │   ├── ProjectDetail.tsx     # Epic 7: Analytics
+│       │   ├── ProjectDetail.tsx     # Project analytics
 │       │   ├── ConversationList.tsx  # Search & filter
 │       │   ├── ConversationDetail.tsx
-│       │   ├── Ingestion.tsx         # Upload & watch
-│       │   └── Setup.tsx             # Onboarding
+│       │   ├── Ingestion.tsx         # Upload & watch management
+│       │   ├── FailedSessions.tsx    # Failed session analysis
+│       │   └── Setup.tsx             # Onboarding wizard
 │       │
 │       ├── components/         # Shared UI components
+│       │   ├── SentimentTimelineChart.tsx
+│       │   ├── ToolUsageChart.tsx
+│       │   ├── SessionTable.tsx
+│       │   └── SessionPagination.tsx
+│       │
 │       ├── lib/                # Utilities
 │       │   ├── api.ts          # Type-safe API client
 │       │   └── queryClient.ts  # TanStack Query setup
@@ -504,13 +620,15 @@ catsyphon/                      # Monorepo root
 │       └── types/              # TypeScript interfaces
 │
 ├── docs/                       # Technical documentation
-│   ├── ARCHITECTURE.md         # 🆕 System architecture (diagrams)
 │   ├── implementation-plan.md  # Detailed specs
 │   ├── incremental-parsing.md  # Performance guide
+│   ├── canonicalization-architecture.md  # Canonicalization system
+│   ├── insights-comprehensive-analysis.md  # 60+ insights catalog
 │   ├── plugin-sdk.md           # Parser plugin guide
 │   ├── parser-quickstart.md    # 15-min tutorial
 │   └── api-reference.md        # API docs
 │
+├── ARCHITECTURE.md             # System architecture (diagrams)
 ├── .mise.toml                  # Tool version management
 ├── docker-compose.yml          # PostgreSQL container
 ├── .env.example                # Environment template
@@ -520,10 +638,11 @@ catsyphon/                      # Monorepo root
 **Key directories:**
 
 - 🔌 **parsers/** - Add new parsers here (plugin system)
+- 🎭 **canonicalization/** - LLM-optimized conversation representation
 - 🌐 **api/routes/** - REST API endpoints
 - 📊 **frontend/src/pages/** - UI pages and components
 - 📚 **docs/** - Technical documentation with diagrams
-- 🧪 **tests/** - 1,200+ passing tests
+- 🧪 **tests/** - 1,345+ tests (84% backend coverage)
 
 ## Development
 
@@ -639,6 +758,11 @@ See [docs/implementation-plan.md](./docs/implementation-plan.md) for detailed co
 - **[🏗️ ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture with diagrams
 - **[⚡ Incremental Parsing](./docs/incremental-parsing.md)** - Performance optimization guide
 
+### 🎭 Advanced Features
+
+- **[Canonicalization Architecture](./docs/canonicalization-architecture.md)** - LLM-optimized conversation representation
+- **[Insights Analysis](./docs/insights-comprehensive-analysis.md)** - 60+ metrics catalog
+
 ### 🔌 For Plugin Developers
 
 - **[Parser Plugin SDK](./docs/plugin-sdk.md)** - Complete guide to creating parsers
@@ -747,8 +871,8 @@ The file cache reduces costs by 80-90%.
 <summary><strong>Q: Can I deploy CatSyphon to production?</strong></summary>
 
 Yes! CatSyphon is production-ready:
-- ✅ 1,200+ passing tests
-- ✅ 84% backend coverage
+- ✅ 1,345+ tests (1,062 backend + 283 frontend)
+- ✅ 84% backend test coverage
 - ✅ PostgreSQL with optimized indexes
 - ✅ Multi-tenancy support (workspace isolation)
 

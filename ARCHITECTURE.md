@@ -10,6 +10,8 @@ This document provides a comprehensive technical overview of CatSyphon's archite
 - [Parser Plugin System](#parser-plugin-system)
 - [Database Schema](#database-schema)
 - [Incremental Parsing](#incremental-parsing)
+- [Canonicalization System](#canonicalization-system)
+- [Insights System](#insights-system)
 - [Frontend Architecture](#frontend-architecture)
 - [API Design](#api-design)
 - [Key Design Decisions](#key-design-decisions)
@@ -20,9 +22,13 @@ CatSyphon is a full-stack application for analyzing AI coding assistant conversa
 
 - **Log ingestion** from multiple AI coding assistants (Claude Code, Cursor, Copilot, etc.)
 - **AI-powered enrichment** using OpenAI GPT-4o-mini for sentiment, intent, and outcome analysis
+- **Canonicalization** with intelligent message sampling and LLM-optimized narrative generation
+- **60+ insights** across session success, developer experience, tool usage, and code productivity
 - **Real-time monitoring** with live directory watching and automatic file deduplication
 - **Advanced analytics** through a modern web interface with dashboards and visualizations
 - **REST API** for programmatic access to conversation data
+
+**Test Coverage**: 1,345+ tests (1,062 backend with 84% coverage, 283 frontend)
 
 ## High-Level Architecture
 
@@ -30,6 +36,7 @@ CatSyphon is a full-stack application for analyzing AI coding assistant conversa
 graph TB
     subgraph "Data Sources"
         CC[Claude Code Logs]
+        CX[OpenAI Codex Logs]
         CR[Cursor Logs]
         CP[Copilot Logs]
         OT[Other Agent Logs]
@@ -38,7 +45,7 @@ graph TB
     subgraph "Ingestion Layer"
         WD[Watch Daemon<br/>Live Monitoring]
         CLI[CLI Tool<br/>Batch Ingestion]
-        API[Upload API<br/>Web Upload]
+        UPLOAD[Upload API<br/>Web Upload]
     end
 
     subgraph "Processing Pipeline"
@@ -49,8 +56,14 @@ graph TB
         TAG[AI Tagging<br/>OpenAI GPT-4o-mini]
     end
 
+    subgraph "Canonicalization"
+        CANON[Canonicalizer<br/>Token Budget]
+        SAMPLER[SemanticSampler<br/>Priority Selection]
+        BUILDER[PlayFormatBuilder<br/>Narrative]
+    end
+
     subgraph "Storage Layer"
-        PG[(PostgreSQL<br/>Conversations, Messages,<br/>Files, Metadata)]
+        PG[(PostgreSQL<br/>Conversations, Messages,<br/>Canonical, Metadata)]
         CACHE[File Cache<br/>Tagging Results]
     end
 
@@ -64,14 +77,17 @@ graph TB
 
     CC --> WD
     CC --> CLI
-    CC --> API
+    CC --> UPLOAD
+    CX --> WD
+    CX --> CLI
+    CX --> UPLOAD
     CR --> WD
     CR --> CLI
     OT --> WD
 
     WD --> REG
     CLI --> REG
-    API --> REG
+    UPLOAD --> REG
 
     REG --> PAR
     PAR --> INC
@@ -80,41 +96,41 @@ graph TB
     TAG --> PG
     TAG --> CACHE
 
+    PG --> CANON
+    CANON --> SAMPLER
+    SAMPLER --> BUILDER
+    BUILDER --> PG
+
     PG --> REST
     REST --> UI
 
     style INC fill:#90EE90
     style DUP fill:#87CEEB
     style TAG fill:#FFB6C1
+    style CANON fill:#FFD700
     style UI fill:#DDA0DD
 ```
 
 ### Key Components
 
-1. **Ingestion Layer**: Multiple entry points for log data
-   - Watch Daemon: Monitors directories for new logs
-   - CLI Tool: Batch processing of log files
-   - Upload API: Web-based file uploads
-
-2. **Processing Pipeline**: Transforms raw logs into structured data
-   - Parser Registry: Auto-detects log format
-   - Plugin Parsers: Extensible parser implementations
-   - Incremental Parser: Optimized for appends (10-106x faster)
-   - Deduplication: Prevents reprocessing identical files
-   - AI Tagging: Enriches with sentiment, intent, outcome
-
-3. **Storage Layer**: Persistent data storage
-   - PostgreSQL: Primary database with normalized schema
-   - File Cache: 30-day TTL cache for tagging results
-
-4. **API Layer**: REST API for data access
-   - FastAPI: Modern async Python framework
-   - SQLAlchemy 2.0: Async ORM with repository pattern
-
-5. **Frontend**: Modern React web interface
-   - Real-time polling (15s intervals)
-   - Advanced filtering and sorting
-   - Interactive charts and visualizations
+| Layer | Component | Purpose |
+|-------|-----------|---------|
+| **Ingestion** | Watch Daemon | Monitors directories for new logs |
+| | CLI Tool | Batch processing of log files |
+| | Upload API | Web-based file uploads |
+| **Processing** | Parser Registry | Auto-detects log format |
+| | Plugin Parsers | Extensible parser implementations |
+| | Incremental Parser | Optimized for appends (10-106x faster) |
+| | Deduplication | Hash-based duplicate prevention |
+| | AI Tagging | Sentiment, intent, outcome enrichment |
+| **Canonicalization** | Canonicalizer | Token budget management |
+| | SemanticSampler | Priority-based message selection |
+| | PlayFormatBuilder | LLM-optimized narrative generation |
+| **Storage** | PostgreSQL | Normalized schema with JSONB |
+| | File Cache | 30-day TTL for tagging results |
+| **API** | FastAPI | Async REST API |
+| | SQLAlchemy 2.0 | Async ORM with repository pattern |
+| **Frontend** | React 19 | Real-time polling, interactive charts |
 
 ## Data Flow
 
@@ -356,6 +372,26 @@ erDiagram
         int last_processed_line
         string partial_hash
     }
+
+    CONVERSATION_CANONICAL {
+        uuid id PK
+        uuid conversation_id FK
+        int version
+        string canonical_type
+        text narrative
+        int token_count
+        jsonb metadata
+        jsonb config
+    }
+
+    INGESTION_JOB {
+        uuid id PK
+        uuid raw_log_id FK
+        string status
+        jsonb metrics
+        string error_message
+        timestamp created_at
+    }
 ```
 
 ### Key Tables
@@ -376,6 +412,10 @@ erDiagram
 #### Configuration
 - **watch_configurations**: Directory monitoring settings
 - **collector_configs**: Remote collector agent settings (future)
+
+#### Canonicalization & Processing
+- **conversation_canonical**: Cached LLM-optimized representations
+- **ingestion_jobs**: Processing status and metrics tracking
 
 ### Indexes
 
@@ -502,6 +542,167 @@ sequenceDiagram
     end
 ```
 
+## Canonicalization System
+
+The canonicalization system converts raw conversation logs into optimized, hierarchical narrative representations for efficient LLM analysis.
+
+### Key Benefits
+
+| Benefit | Improvement |
+|---------|-------------|
+| Tagging Latency | 50%+ reduction |
+| Token Efficiency | 90%+ fit within 10K budget |
+| API Cost Reduction | 80-90% fewer OpenAI calls |
+| Context Quality | Hierarchical agent context |
+
+### Canonicalization Flow
+
+```mermaid
+graph TB
+    subgraph "Input"
+        CONV[Conversation + Messages]
+        CHILDREN[Child Conversations]
+    end
+
+    subgraph "Canonicalization Module"
+        CACHE{Cache Check}
+        CONFIG[CanonicalConfig<br/>Token Budget]
+        SAMPLER[SemanticSampler<br/>Priority Selection]
+        BUILDER[PlayFormatBuilder<br/>Narrative Generation]
+    end
+
+    subgraph "Output"
+        DB[(conversation_canonical)]
+        CONSUMERS[Tagging / Insights / API]
+    end
+
+    CONV --> CACHE
+    CACHE -->|Miss| CONFIG
+    CACHE -->|Hit| DB
+    CONFIG --> SAMPLER
+    CHILDREN --> SAMPLER
+    SAMPLER --> BUILDER
+    BUILDER --> DB
+    DB --> CONSUMERS
+
+    style CACHE fill:#f9f,stroke:#333,stroke-width:2px
+    style DB fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### Canonical Types
+
+| Type | Token Budget | Use Case |
+|------|-------------|----------|
+| **TAGGING** | 8K | Quick metadata extraction |
+| **INSIGHTS** | 12K | Analytics and patterns |
+| **EXPORT** | 20K | Full representation |
+
+### Sampling Strategies
+
+| Strategy | Budget | Best For |
+|----------|--------|----------|
+| **semantic** | Enforced | Most use cases (priority-based) |
+| **epoch** | Enforced | Workflow analysis (full first/last epochs) |
+| **chronological** | Unlimited | Large context models, exports |
+
+### Message Priority
+
+```python
+Priority Levels:
+- 1000: First/last messages (always included)
+- 900:  Error messages
+- 800:  Tool calls
+- 700:  Thinking content
+- 600:  Epoch boundaries
+- 500:  Code changes
+```
+
+### Play Format Narrative
+
+The builder generates a theatrical "play" format optimized for LLM comprehension:
+
+```
+=== CONVERSATION: claude-code-2024-11-21-14-30-00 ===
+Agent: claude-code v1.2.5
+Type: main
+Duration: 17 minutes 32 seconds
+Status: COMPLETED (SUCCESS)
+Messages: 42 | Epochs: 3 | Files: 5
+
+--- EPOCH 1 ---
+
+[14:30:15] USER: Help me implement JWT authentication
+  [PRIORITY: first]
+
+[14:30:30] ASSISTANT: I'll help you add JWT authentication...
+  [TOOLS: Glob, Read]
+    ✓ Read: /app/models/user.py
+
+┌─ AGENT DELEGATION: child-session-id ─┐
+│ Type: agent
+│ Tools: Read, Edit
+│   [14:37:05] AGENT: Analyzing...
+└────────────────────────────────────────┘
+
+=== SUMMARY ===
+Outcome: SUCCESS
+Intent: feature_add
+Sampling: 18/42 messages (43%)
+```
+
+For full details, see [Canonicalization Architecture](./docs/canonicalization-architecture.md).
+
+---
+
+## Insights System
+
+CatSyphon extracts 60+ insights from conversation logs to measure agent-human collaboration effectiveness.
+
+### Insight Categories
+
+```mermaid
+pie title Insights Distribution
+    "Session Success" : 18
+    "Developer Experience" : 18
+    "Tool Usage" : 9
+    "Temporal Metrics" : 9
+    "Code Productivity" : 15
+    "Error Analysis" : 6
+```
+
+| Category | Insights | Key Metrics |
+|----------|----------|-------------|
+| **Session Success** | 18 | Success rate by project, developer, intent |
+| **Developer Experience** | 18 | Sentiment trends, frustration detection |
+| **Tool Usage** | 9 | Agent behavior, tool effectiveness |
+| **Temporal Metrics** | 9 | Duration analysis, time patterns |
+| **Code Productivity** | 15 | Lines changed, files touched |
+| **Error Analysis** | 6 | Problem patterns, resolution rates |
+
+### Example Insights
+
+**Success Rate by Context:**
+- Overall success rate: `SUM(success=True) / COUNT(*)`
+- Success by project: Identify difficult codebases
+- Success by developer: Find learning opportunities
+- Success by intent: Compare task type effectiveness
+
+**Intent vs. Outcome Analysis:**
+- Success rate by intent type
+- Average duration by intent
+- Intent-outcome matrix heatmap
+- Sentiment by intent type
+
+**Tool Usage Patterns:**
+- Most used tools per project
+- Tool call success/failure rates
+- Tool call sequences
+- Agent delegation frequency
+
+For the complete catalog, see [Insights Comprehensive Analysis](./docs/insights-comprehensive-analysis.md).
+
+---
+
 ## Frontend Architecture
 
 ### Component Structure
@@ -620,7 +821,10 @@ sequenceDiagram
 │   ├── GET  /                       # List with filters
 │   ├── GET  /{id}                   # Get by ID
 │   ├── GET  /{id}/messages          # Get messages
-│   └── GET  /{id}/files             # Get file changes
+│   ├── GET  /{id}/files             # Get file changes
+│   ├── GET  /{id}/canonical         # Get canonical representation
+│   ├── GET  /{id}/canonical/narrative  # Get narrative only
+│   └── POST /{id}/canonical/regenerate # Force regenerate
 │
 ├── /projects                        # Project analytics
 │   ├── GET  /                       # List projects
@@ -641,8 +845,11 @@ sequenceDiagram
 ├── /upload                          # File upload
 │   └── POST /                       # Multipart upload
 │
-├── /ingestion                       # Direct ingestion
-│   └── POST /process                # Process log file
+├── /ingestion                       # Ingestion management
+│   ├── POST /process                # Process log file
+│   ├── GET  /jobs                   # List ingestion jobs
+│   ├── GET  /jobs/{id}              # Get job details
+│   └── GET  /stats                  # Pipeline performance stats
 │
 └── /watch                           # Directory watching
     ├── GET    /configs              # List watch configs
@@ -751,7 +958,23 @@ class ProjectStats(BaseModel):
 - File system dependency (not distributed)
 - Manual cache invalidation required for updates
 
-### 5. Real-Time Polling (15s Intervals)
+### 5. Canonicalization System
+
+**Decision**: Convert conversations to token-budgeted, theatrical narrative format
+
+**Rationale**:
+- 50%+ reduction in tagging latency
+- 80-90% fewer OpenAI API calls through caching
+- Priority-based sampling preserves key context
+- LLM-optimized format improves classification accuracy
+- Hierarchical context for parent/child conversations
+
+**Trade-offs**:
+- Additional storage for canonical representations
+- Cache invalidation complexity
+- Token counting overhead
+
+### 6. Real-Time Polling (15s Intervals)
 
 **Decision**: Client-side polling with TanStack Query
 
@@ -766,7 +989,7 @@ class ProjectStats(BaseModel):
 - Extra network requests
 - Less efficient than WebSockets for high-frequency updates
 
-### 6. Repository Pattern for Data Access
+### 7. Repository Pattern for Data Access
 
 **Decision**: Separate repository classes for each entity
 
@@ -781,7 +1004,7 @@ class ProjectStats(BaseModel):
 - Indirection layer
 - Can be over-engineering for simple CRUD
 
-### 7. Monorepo Structure
+### 8. Monorepo Structure
 
 **Decision**: Single repository for backend and frontend
 
@@ -910,13 +1133,18 @@ graph TB
 
 CatSyphon's architecture prioritizes:
 
-1. **Extensibility**: Plugin system for new agent support
-2. **Performance**: Incremental parsing for 10-106x speedups
-3. **Simplicity**: Standard patterns (REST API, React, PostgreSQL)
-4. **Maintainability**: Clear separation of concerns, type safety
-5. **Future-proofing**: Multi-tenancy ready, scalable design
+| Priority | Implementation |
+|----------|---------------|
+| **Extensibility** | Plugin system for new agent support |
+| **Performance** | Incremental parsing (10-106x speedups), canonicalization caching |
+| **Insights** | 60+ metrics across 6 categories |
+| **Simplicity** | Standard patterns (REST API, React, PostgreSQL) |
+| **Maintainability** | Clear separation of concerns, 84% test coverage |
+| **Future-proofing** | Multi-tenancy ready, scalable design |
 
 For more details, see:
 - [Implementation Plan](./docs/implementation-plan.md)
 - [Parser Plugin SDK](./docs/plugin-sdk.md)
 - [Incremental Parsing Guide](./docs/incremental-parsing.md)
+- [Canonicalization Architecture](./docs/canonicalization-architecture.md)
+- [Insights Comprehensive Analysis](./docs/insights-comprehensive-analysis.md)
