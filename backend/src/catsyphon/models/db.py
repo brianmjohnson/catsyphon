@@ -939,3 +939,102 @@ class ConversationCanonical(Base):
             f"type={self.canonical_type!r}, "
             f"version={self.version})>"
         )
+
+
+class ConversationInsights(Base):
+    """Cached insights for conversations.
+
+    Stores LLM-generated qualitative insights and quantitative metrics
+    to avoid repeated LLM calls for the same conversation.
+    """
+
+    __tablename__ = "conversation_insights"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Version for cache invalidation
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Qualitative insights (from LLM)
+    workflow_patterns: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    productivity_indicators: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    collaboration_quality: Mapped[int] = mapped_column(Integer, nullable=False)
+    key_moments: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    learning_opportunities: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    agent_effectiveness: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope_clarity: Mapped[int] = mapped_column(Integer, nullable=False)
+    technical_debt_indicators: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    testing_behavior: Mapped[str] = mapped_column(String(100), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Quantitative metrics (from canonical)
+    quantitative_metrics: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+
+    # Metadata
+    canonical_version: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )  # Track which canonical version was used
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )  # TTL: null = never expires, set based on project activity
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id", "version", name="uq_conversation_insights_version"
+        ),
+    )
+
+    # Relationships
+    conversation: Mapped["Conversation"] = relationship()
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConversationInsights(id={self.id}, "
+            f"conversation_id={self.conversation_id}, "
+            f"version={self.version})>"
+        )
+
+    def to_response_dict(self) -> dict:
+        """Convert to dictionary matching InsightsResponse schema."""
+        return {
+            "conversation_id": str(self.conversation_id),
+            "workflow_patterns": self.workflow_patterns,
+            "productivity_indicators": self.productivity_indicators,
+            "collaboration_quality": self.collaboration_quality,
+            "key_moments": self.key_moments,
+            "learning_opportunities": self.learning_opportunities,
+            "agent_effectiveness": self.agent_effectiveness,
+            "scope_clarity": self.scope_clarity,
+            "technical_debt_indicators": self.technical_debt_indicators,
+            "testing_behavior": self.testing_behavior,
+            "summary": self.summary,
+            "quantitative_metrics": self.quantitative_metrics,
+            "canonical_version": self.canonical_version,
+            "analysis_timestamp": self.generated_at.timestamp(),
+        }

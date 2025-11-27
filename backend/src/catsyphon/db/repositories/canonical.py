@@ -194,6 +194,8 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
     ) -> ConversationCanonical:
         """Save canonical representation to database.
 
+        Uses upsert pattern: deletes existing entry (if any) before inserting.
+
         Args:
             conversation_id: Conversation ID
             canonical_type: Type of canonical
@@ -202,8 +204,13 @@ class CanonicalRepository(BaseRepository[ConversationCanonical]):
         Returns:
             Saved database model
         """
+        # Delete existing entry if present (upsert pattern)
+        self.invalidate(
+            conversation_id=conversation_id,
+            canonical_type=canonical_type,
+        )
+
         # Estimate source tokens (for window-based regeneration)
-        token_counter = TokenCounter()
         # Simple estimate: message_count * avg_tokens_per_message
         estimated_source_tokens = canonical.message_count * 100  # Conservative estimate
 
