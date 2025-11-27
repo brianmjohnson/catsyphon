@@ -735,58 +735,57 @@ function AnalyticsTab({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-card border border-border rounded-lg p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <ArrowLeftRight className="w-4 h-4 text-cyan-300" />
-            <h3 className="text-lg font-semibold">Influence Flows</h3>
-          </div>
-          {influence_flows.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No adoption events yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {influence_flows.map((flow) => (
-                <div
-                  key={`${flow.source}-${flow.target}`}
-                  className="flex items-center justify-between border border-border/50 rounded-md px-3 py-2 bg-slate-900/30"
-                >
-                  <div>
-                    <p className="font-semibold text-foreground">
-                      {flow.source} → {flow.target}
-                    </p>
+      {/* Only show these sections when there's data */}
+      {(influence_flows.length > 0 || error_heatmap.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {influence_flows.length > 0 && (
+            <div className="bg-card border border-border rounded-lg p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <ArrowLeftRight className="w-4 h-4 text-cyan-300" />
+                <h3 className="text-lg font-semibold">Influence Flows</h3>
+              </div>
+              <div className="space-y-2">
+                {influence_flows.map((flow) => (
+                  <div
+                    key={`${flow.source}-${flow.target}`}
+                    className="flex items-center justify-between border border-border/50 rounded-md px-3 py-2 bg-slate-900/30"
+                  >
+                    <div>
+                      <p className="font-semibold text-foreground">
+                        {flow.source} → {flow.target}
+                      </p>
+                    </div>
+                    <p className="text-sm font-bold text-cyan-300">{flow.count}</p>
                   </div>
-                  <p className="text-sm font-bold text-cyan-300">{flow.count}</p>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
-        </div>
 
-        <div className="bg-card border border-border rounded-lg p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Network className="w-4 h-4 text-amber-300" />
-            <h3 className="text-lg font-semibold">Error Heatmap</h3>
-          </div>
-          {error_heatmap.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No errors recorded.</p>
-          ) : (
-            <div className="space-y-2">
-              {error_heatmap.map((bucket) => (
-                <div
-                  key={`${bucket.agent_type}-${bucket.category}`}
-                  className="flex items-center justify-between border border-border/50 rounded-md px-3 py-2 bg-slate-900/30"
-                >
-                  <div>
-                    <p className="font-semibold text-foreground">{bucket.agent_type}</p>
-                    <p className="text-xs text-muted-foreground">{bucket.category}</p>
+          {error_heatmap.length > 0 && (
+            <div className="bg-card border border-border rounded-lg p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Network className="w-4 h-4 text-amber-300" />
+                <h3 className="text-lg font-semibold">Error Heatmap</h3>
+              </div>
+              <div className="space-y-2">
+                {error_heatmap.map((bucket) => (
+                  <div
+                    key={`${bucket.agent_type}-${bucket.category}`}
+                    className="flex items-center justify-between border border-border/50 rounded-md px-3 py-2 bg-slate-900/30"
+                  >
+                    <div>
+                      <p className="font-semibold text-foreground">{bucket.agent_type}</p>
+                      <p className="text-xs text-muted-foreground">{bucket.category}</p>
+                    </div>
+                    <p className="text-sm font-bold text-amber-300">{bucket.count}</p>
                   </div>
-                  <p className="text-sm font-bold text-amber-300">{bucket.count}</p>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
