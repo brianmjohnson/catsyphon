@@ -504,3 +504,46 @@ export interface CanonicalNarrativeResponse {
   canonical_type: string;
   version: number;
 }
+
+// ===== Insights Types =====
+
+export interface KeyMoment {
+  timestamp: string; // "early", "mid", "late"
+  event: string; // Description of the event
+  impact: string; // "positive", "negative", "neutral"
+}
+
+export interface QuantitativeMetrics {
+  message_count: number;
+  epoch_count: number;
+  files_touched_count: number;
+  tool_calls_count: number;
+  token_count: number;
+  has_errors: boolean;
+  tools_used: string[];
+  child_conversations_count: number;
+  duration_seconds: number | null;
+}
+
+export interface InsightsResponse {
+  conversation_id: string;
+
+  // Qualitative insights from LLM
+  workflow_patterns: string[];
+  productivity_indicators: string[];
+  collaboration_quality: number; // 1-10
+  key_moments: KeyMoment[];
+  learning_opportunities: string[];
+  agent_effectiveness: number; // 1-10
+  scope_clarity: number; // 1-10
+  technical_debt_indicators: string[];
+  testing_behavior: string;
+  summary: string;
+
+  // Quantitative metrics
+  quantitative_metrics: QuantitativeMetrics;
+
+  // Metadata
+  canonical_version: number;
+  analysis_timestamp: number;
+}

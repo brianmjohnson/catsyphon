@@ -5,13 +5,13 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { Loader2, Sparkles, Info, MessageSquare, FileText } from 'lucide-react';
-import { getConversation, getCanonicalNarrative, tagConversation } from '@/lib/api';
+import { Loader2, Sparkles, Info, MessageSquare, FileText, Lightbulb, TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle2, Target, Users, Zap } from 'lucide-react';
+import { getConversation, getCanonicalNarrative, tagConversation, getConversationInsights } from '@/lib/api';
 import { groupFilesByPath } from '@/lib/utils';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useRefreshCountdown } from '@/hooks/useRefreshCountdown';
 
-type Tab = 'overview' | 'messages' | 'canonical';
+type Tab = 'overview' | 'insights' | 'messages' | 'canonical';
 
 export default function ConversationDetail() {
   const { id } = useParams<{ id: string }>();
@@ -36,9 +36,18 @@ export default function ConversationDetail() {
     staleTime: 60000 * 5, // Cache for 5 minutes
   });
 
+  // Insights query (only fetch when tab is active)
+  const { data: insights, isLoading: isLoadingInsights, error: insightsError } = useQuery({
+    queryKey: ['conversation-insights', id],
+    queryFn: () => getConversationInsights(id!),
+    enabled: !!id && activeTab === 'insights',
+    staleTime: 60000 * 5, // Cache for 5 minutes
+  });
+
   // Tab configuration
   const tabs = [
     { id: 'overview' as Tab, label: 'Overview', icon: Info },
+    { id: 'insights' as Tab, label: 'Insights', icon: Lightbulb },
     { id: 'messages' as Tab, label: 'Messages', icon: MessageSquare },
     { id: 'canonical' as Tab, label: 'Canonical', icon: FileText },
   ];
@@ -625,6 +634,260 @@ export default function ConversationDetail() {
         )}
       </div>
           </>
+        )}
+
+        {/* Insights Tab */}
+        {activeTab === 'insights' && (
+          <div className="space-y-6">
+            {isLoadingInsights ? (
+              <div className="bg-card border border-border rounded-lg p-6">
+                <div className="text-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+                  <p className="mt-4 text-muted-foreground">Generating insights...</p>
+                  <p className="mt-2 text-sm text-muted-foreground">This uses AI to analyze the conversation and may take a moment</p>
+                </div>
+              </div>
+            ) : insightsError ? (
+              <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
+                <p className="text-destructive">Failed to generate insights</p>
+                <p className="text-sm text-destructive/80 mt-1">{insightsError.message}</p>
+              </div>
+            ) : insights ? (
+              <>
+                {/* Summary - The "Why" at a Glance */}
+                <div className="bg-card border border-border rounded-lg p-6">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg bg-amber-500/10">
+                      <Lightbulb className="h-5 w-5 text-amber-500" />
+                    </div>
+                    <div className="flex-1">
+                      <h2 className="text-lg font-semibold mb-2">Summary</h2>
+                      <p className="text-foreground/90 leading-relaxed">{insights.summary}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quality Scores - Visual Overview */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Collaboration Quality */}
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Users className="h-4 w-4 text-cyan-500" />
+                      <h3 className="text-sm font-medium text-muted-foreground">Collaboration Quality</h3>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <span className={`text-3xl font-bold ${
+                        insights.collaboration_quality >= 7 ? 'text-emerald-500' :
+                        insights.collaboration_quality >= 4 ? 'text-amber-500' : 'text-rose-500'
+                      }`}>
+                        {insights.collaboration_quality}
+                      </span>
+                      <span className="text-muted-foreground text-sm mb-1">/ 10</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      How well human and AI worked together
+                    </p>
+                  </div>
+
+                  {/* Agent Effectiveness */}
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Zap className="h-4 w-4 text-purple-500" />
+                      <h3 className="text-sm font-medium text-muted-foreground">Agent Effectiveness</h3>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <span className={`text-3xl font-bold ${
+                        insights.agent_effectiveness >= 7 ? 'text-emerald-500' :
+                        insights.agent_effectiveness >= 4 ? 'text-amber-500' : 'text-rose-500'
+                      }`}>
+                        {insights.agent_effectiveness}
+                      </span>
+                      <span className="text-muted-foreground text-sm mb-1">/ 10</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      How helpful the AI assistant was
+                    </p>
+                  </div>
+
+                  {/* Scope Clarity */}
+                  <div className="bg-card border border-border rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Target className="h-4 w-4 text-blue-500" />
+                      <h3 className="text-sm font-medium text-muted-foreground">Scope Clarity</h3>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <span className={`text-3xl font-bold ${
+                        insights.scope_clarity >= 7 ? 'text-emerald-500' :
+                        insights.scope_clarity >= 4 ? 'text-amber-500' : 'text-rose-500'
+                      }`}>
+                        {insights.scope_clarity}
+                      </span>
+                      <span className="text-muted-foreground text-sm mb-1">/ 10</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      How well-defined the goal was
+                    </p>
+                  </div>
+                </div>
+
+                {/* Key Moments - The Story of What Happened */}
+                {insights.key_moments && insights.key_moments.length > 0 && (
+                  <div className="bg-card border border-border rounded-lg p-6">
+                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <span>Key Moments</span>
+                      <span className="text-xs font-normal text-muted-foreground">(Critical turning points)</span>
+                    </h2>
+                    <div className="space-y-3">
+                      {insights.key_moments.map((moment, idx) => (
+                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                          <div className={`p-1.5 rounded-full ${
+                            moment.impact === 'positive' ? 'bg-emerald-500/10' :
+                            moment.impact === 'negative' ? 'bg-rose-500/10' : 'bg-slate-500/10'
+                          }`}>
+                            {moment.impact === 'positive' ? (
+                              <TrendingUp className="h-4 w-4 text-emerald-500" />
+                            ) : moment.impact === 'negative' ? (
+                              <TrendingDown className="h-4 w-4 text-rose-500" />
+                            ) : (
+                              <Minus className="h-4 w-4 text-slate-500" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                {moment.timestamp}
+                              </span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                moment.impact === 'positive' ? 'bg-emerald-500/10 text-emerald-600' :
+                                moment.impact === 'negative' ? 'bg-rose-500/10 text-rose-600' : 'bg-slate-500/10 text-slate-600'
+                              }`}>
+                                {moment.impact}
+                              </span>
+                            </div>
+                            <p className="text-sm">{moment.event}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Workflow Patterns & Learning Opportunities - Side by Side */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Workflow Patterns */}
+                  {insights.workflow_patterns && insights.workflow_patterns.length > 0 && (
+                    <div className="bg-card border border-border rounded-lg p-6">
+                      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                        <span>Workflow Patterns</span>
+                      </h2>
+                      <p className="text-xs text-muted-foreground mb-3">Observable patterns in this session</p>
+                      <ul className="space-y-2">
+                        {insights.workflow_patterns.map((pattern, idx) => (
+                          <li key={idx} className="flex items-start gap-2 text-sm">
+                            <span className="text-emerald-500 mt-0.5">•</span>
+                            <span>{pattern}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Learning Opportunities */}
+                  {insights.learning_opportunities && insights.learning_opportunities.length > 0 && (
+                    <div className="bg-card border border-border rounded-lg p-6">
+                      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <AlertTriangle className="h-5 w-5 text-amber-500" />
+                        <span>Learning Opportunities</span>
+                      </h2>
+                      <p className="text-xs text-muted-foreground mb-3">Areas for improvement</p>
+                      <ul className="space-y-2">
+                        {insights.learning_opportunities.map((opportunity, idx) => (
+                          <li key={idx} className="flex items-start gap-2 text-sm">
+                            <span className="text-amber-500 mt-0.5">•</span>
+                            <span>{opportunity}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* Technical Details - Collapsible */}
+                <details className="bg-card border border-border rounded-lg">
+                  <summary className="p-6 cursor-pointer hover:bg-muted/50 transition-colors">
+                    <span className="text-lg font-semibold">Technical Details</span>
+                    <span className="text-sm text-muted-foreground ml-2">(productivity indicators, tech debt, testing)</span>
+                  </summary>
+                  <div className="px-6 pb-6 space-y-6 border-t border-border pt-6">
+                    {/* Productivity Indicators */}
+                    {insights.productivity_indicators && insights.productivity_indicators.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">Productivity Indicators</h3>
+                        <div className="flex flex-wrap gap-2">
+                          {insights.productivity_indicators.map((indicator, idx) => (
+                            <span key={idx} className="px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-600 text-xs">
+                              {indicator}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Technical Debt Indicators */}
+                    {insights.technical_debt_indicators && insights.technical_debt_indicators.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">Technical Debt Signals</h3>
+                        <ul className="space-y-1">
+                          {insights.technical_debt_indicators.map((debt, idx) => (
+                            <li key={idx} className="text-sm text-rose-600 dark:text-rose-400 flex items-start gap-2">
+                              <span className="mt-0.5">⚠️</span>
+                              <span>{debt}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Testing Behavior */}
+                    {insights.testing_behavior && (
+                      <div>
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">Testing Behavior</h3>
+                        <p className="text-sm">{insights.testing_behavior}</p>
+                      </div>
+                    )}
+
+                    {/* Quantitative Metrics */}
+                    <div>
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Session Metrics</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-semibold">{insights.quantitative_metrics.message_count}</p>
+                          <p className="text-xs text-muted-foreground">Messages</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-semibold">{insights.quantitative_metrics.tool_calls_count}</p>
+                          <p className="text-xs text-muted-foreground">Tool Calls</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-semibold">{insights.quantitative_metrics.files_touched_count}</p>
+                          <p className="text-xs text-muted-foreground">Files Touched</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-semibold">
+                            {insights.quantitative_metrics.duration_seconds
+                              ? `${Math.round(insights.quantitative_metrics.duration_seconds / 60)}m`
+                              : 'N/A'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Duration</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </>
+            ) : null}
+          </div>
         )}
 
         {/* Messages Tab */}

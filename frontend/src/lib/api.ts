@@ -14,11 +14,11 @@ import type {
   IngestionJobFilters,
   IngestionJobResponse,
   IngestionStatsResponse,
+  InsightsResponse,
   MessageResponse,
   OverviewStats,
   ProjectFileAggregation,
   ProjectListItem,
-  ProjectResponse,
   ProjectSession,
   ProjectStats,
   ProjectAnalytics,
@@ -138,6 +138,19 @@ export async function tagConversation(
   return apiFetch<ConversationDetail>(
     `/conversations/${id}/tag${query ? `?${query}` : ''}`,
     { method: 'POST' }
+  );
+}
+
+export async function getConversationInsights(
+  id: string,
+  forceRegenerate = false
+): Promise<InsightsResponse> {
+  const params = new URLSearchParams();
+  if (forceRegenerate) params.append('force_regenerate', 'true');
+
+  const query = params.toString();
+  return apiFetch<InsightsResponse>(
+    `/conversations/${id}/insights${query ? `?${query}` : ''}`
   );
 }
 
