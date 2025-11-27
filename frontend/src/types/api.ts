@@ -504,3 +504,102 @@ export interface CanonicalNarrativeResponse {
   canonical_type: string;
   version: number;
 }
+
+// ===== Insights Types =====
+
+export interface KeyMoment {
+  timestamp: string; // "early", "mid", "late"
+  event: string; // Description of the event
+  impact: string; // "positive", "negative", "neutral"
+}
+
+export interface QuantitativeMetrics {
+  message_count: number;
+  epoch_count: number;
+  files_touched_count: number;
+  tool_calls_count: number;
+  token_count: number;
+  has_errors: boolean;
+  tools_used: string[];
+  child_conversations_count: number;
+  duration_seconds: number | null;
+}
+
+export interface InsightsResponse {
+  conversation_id: string;
+
+  // Qualitative insights from LLM
+  workflow_patterns: string[];
+  productivity_indicators: string[];
+  collaboration_quality: number; // 1-10
+  key_moments: KeyMoment[];
+  learning_opportunities: string[];
+  agent_effectiveness: number; // 1-10
+  scope_clarity: number; // 1-10
+  technical_debt_indicators: string[];
+  testing_behavior: string;
+  summary: string;
+
+  // Quantitative metrics
+  quantitative_metrics: QuantitativeMetrics;
+
+  // Metadata
+  canonical_version: number;
+  analysis_timestamp: number;
+}
+
+// ===== Project Insights Types =====
+
+export interface PatternFrequency {
+  pattern: string;
+  count: number;
+  percentage: number;
+}
+
+export interface TrendPoint {
+  date: string; // Week start date (YYYY-MM-DD)
+  avg_score: number;
+  count: number;
+}
+
+export interface ProjectInsightsResponse {
+  project_id: string;
+  date_range: string;
+  conversations_analyzed: number;
+  conversations_with_insights: number;
+
+  // Pattern Aggregation
+  top_workflow_patterns: PatternFrequency[];
+  top_learning_opportunities: PatternFrequency[];
+  top_anti_patterns: PatternFrequency[];
+  common_technical_debt: PatternFrequency[];
+
+  // Temporal Trends
+  collaboration_trend: TrendPoint[];
+  effectiveness_trend: TrendPoint[];
+  scope_clarity_trend: TrendPoint[];
+
+  // Averages
+  avg_collaboration_quality: number;
+  avg_agent_effectiveness: number;
+  avg_scope_clarity: number;
+
+  // Stats
+  total_messages: number;
+  total_tool_calls: number;
+  success_rate: number | null;
+
+  // LLM Summary (optional)
+  summary: string | null;
+
+  // Metadata
+  generated_at: number;
+
+  // Cache metadata (for freshness indicators)
+  insights_cached: number;
+  insights_generated: number;
+  insights_failed: number;
+  oldest_insight_at: string | null;
+  newest_insight_at: string | null;
+  latest_conversation_at: string | null;
+}

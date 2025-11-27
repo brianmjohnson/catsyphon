@@ -14,11 +14,12 @@ import type {
   IngestionJobFilters,
   IngestionJobResponse,
   IngestionStatsResponse,
+  InsightsResponse,
   MessageResponse,
   OverviewStats,
   ProjectFileAggregation,
+  ProjectInsightsResponse,
   ProjectListItem,
-  ProjectResponse,
   ProjectSession,
   ProjectStats,
   ProjectAnalytics,
@@ -138,6 +139,19 @@ export async function tagConversation(
   return apiFetch<ConversationDetail>(
     `/conversations/${id}/tag${query ? `?${query}` : ''}`,
     { method: 'POST' }
+  );
+}
+
+export async function getConversationInsights(
+  id: string,
+  forceRegenerate = false
+): Promise<InsightsResponse> {
+  const params = new URLSearchParams();
+  if (forceRegenerate) params.append('force_regenerate', 'true');
+
+  const query = params.toString();
+  return apiFetch<InsightsResponse>(
+    `/conversations/${id}/insights${query ? `?${query}` : ''}`
   );
 }
 
@@ -382,6 +396,22 @@ export async function getProjectAnalytics(
 ): Promise<ProjectAnalytics> {
   const params = dateRange ? `?date_range=${dateRange}` : '';
   return apiFetch<ProjectAnalytics>(`/projects/${projectId}/analytics${params}`);
+}
+
+export async function getProjectInsights(
+  projectId: string,
+  dateRange: '7d' | '30d' | '90d' | 'all' = '30d',
+  includeSummary = true,
+  forceRegenerate = false
+): Promise<ProjectInsightsResponse> {
+  const params = new URLSearchParams({
+    date_range: dateRange,
+    include_summary: String(includeSummary),
+    force_regenerate: String(forceRegenerate),
+  });
+  return apiFetch<ProjectInsightsResponse>(
+    `/projects/${projectId}/insights?${params.toString()}`
+  );
 }
 
 export interface ProjectSessionFilters {

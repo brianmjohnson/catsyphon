@@ -11,6 +11,7 @@ from catsyphon.db.repositories.conversation import ConversationRepository
 from catsyphon.db.repositories.developer import DeveloperRepository
 from catsyphon.db.repositories.epoch import EpochRepository
 from catsyphon.db.repositories.ingestion_job import IngestionJobRepository
+from catsyphon.db.repositories.insights import InsightsRepository
 from catsyphon.db.repositories.message import MessageRepository
 from catsyphon.db.repositories.organization import OrganizationRepository
 from catsyphon.db.repositories.project import ProjectRepository
@@ -26,6 +27,7 @@ __all__ = [
     "DeveloperRepository",
     "EpochRepository",
     "IngestionJobRepository",
+    "InsightsRepository",
     "MessageRepository",
     "OrganizationRepository",
     "ProjectRepository",

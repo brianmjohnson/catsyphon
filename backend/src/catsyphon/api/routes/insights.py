@@ -4,7 +4,8 @@ Insights API routes.
 Endpoints for generating and retrieving canonical-powered insights.
 """
 
-from typing import Any
+import logging
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,10 +14,25 @@ from sqlalchemy.orm import Session
 from catsyphon.api.schemas import InsightsResponse
 from catsyphon.config import settings
 from catsyphon.db.connection import get_db
-from catsyphon.db.repositories import ConversationRepository
+from catsyphon.db.repositories import (
+    ConversationRepository,
+    InsightsRepository,
+    WorkspaceRepository,
+)
 from catsyphon.insights import InsightsGenerator
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _get_default_workspace_id(session: Session) -> Optional[UUID]:
+    """Get default workspace ID for API operations."""
+    workspace_repo = WorkspaceRepository(session)
+    workspaces = workspace_repo.get_all(limit=1)
+    if not workspaces:
+        return None
+    return workspaces[0].id
 
 
 @router.get("/{conversation_id}/insights", response_model=InsightsResponse)
@@ -32,10 +48,11 @@ def get_conversation_insights(
     Get comprehensive insights for a conversation using canonical representation.
 
     This endpoint generates deep insights about developer-AI collaboration by:
-    1. Getting the canonical representation (intelligently sampled narrative)
-    2. Analyzing the narrative with LLM for qualitative insights
-    3. Extracting quantitative metrics from canonical metadata
-    4. Combining both for a comprehensive view
+    1. Checking cache for existing insights (with TTL)
+    2. If cache miss, generating canonical representation
+    3. Analyzing the narrative with LLM for qualitative insights
+    4. Extracting quantitative metrics from canonical metadata
+    5. Caching the result with activity-based TTL
 
     **Insights Generated:**
     - **Workflow patterns**: Observable patterns (e.g., "iterative-refinement", "error-driven")
@@ -50,7 +67,9 @@ def get_conversation_insights(
     - **Quantitative metrics**: Message count, tools used, files touched, etc.
 
     **Caching:**
-    Canonical representations are cached, making subsequent insight requests fast.
+    Insights are cached with TTL based on project activity:
+    - Active projects (activity within 7 days): 7-day TTL
+    - Inactive projects: 30-day TTL
     Use `force_regenerate=true` to bypass cache.
 
     Args:
@@ -67,7 +86,16 @@ def get_conversation_insights(
     """
     # Get conversation
     conversation_repo = ConversationRepository(session)
-    conversation = conversation_repo.get_by_id(conversation_id)
+    insights_repo = InsightsRepository(session)
+    workspace_id = _get_default_workspace_id(session)
+
+    if workspace_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Conversation {conversation_id} not found"
+        )
+
+    conversation = conversation_repo.get_with_relations(conversation_id, workspace_id)
 
     if not conversation:
         raise HTTPException(
@@ -75,7 +103,7 @@ def get_conversation_insights(
             detail=f"Conversation {conversation_id} not found"
         )
 
-    # Force regeneration if requested
+    # Invalidate cache if force regenerate
     if force_regenerate:
         from catsyphon.db.repositories.canonical import CanonicalRepository
         canonical_repo = CanonicalRepository(session)
@@ -83,8 +111,18 @@ def get_conversation_insights(
             conversation_id=conversation_id,
             canonical_type="insights",
         )
+        insights_repo.invalidate(conversation_id=conversation_id)
+        logger.info(f"Force regenerate: invalidated cache for {conversation_id}")
 
-    # Generate insights
+    # Check cache first
+    cached = insights_repo.get_cached(conversation_id)
+    if cached:
+        logger.info(f"Cache hit for conversation {conversation_id}")
+        return InsightsResponse(**cached.to_response_dict())
+
+    # Cache miss - generate insights
+    logger.info(f"Cache miss for conversation {conversation_id}, generating...")
+
     if not settings.openai_api_key:
         raise HTTPException(
             status_code=500,
@@ -103,6 +141,20 @@ def get_conversation_insights(
         session=session,
         children=children,
     )
+
+    # Get project last activity for TTL calculation
+    project_last_activity = None
+    if conversation.project:
+        project_last_activity = conversation.project.updated_at
+
+    # Save to cache
+    insights_repo.save(
+        conversation_id=conversation_id,
+        insights=insights,
+        canonical_version=insights.get("canonical_version", 1),
+        project_last_activity=project_last_activity,
+    )
+    session.commit()
 
     return InsightsResponse(
         conversation_id=conversation_id,
@@ -139,7 +191,15 @@ def get_batch_insights(
     """
     # Get recent conversations for project
     conversation_repo = ConversationRepository(session)
-    conversations = conversation_repo.get_by_project(project_id, limit=limit)
+    workspace_id = _get_default_workspace_id(session)
+
+    if workspace_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No conversations found for project {project_id}"
+        )
+
+    conversations = conversation_repo.get_by_project(project_id, workspace_id, limit=limit)
 
     if not conversations:
         raise HTTPException(
@@ -147,27 +207,61 @@ def get_batch_insights(
             detail=f"No conversations found for project {project_id}"
         )
 
-    # Generate insights for each conversation
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="OpenAI API key not configured"
-        )
-
-    insights_generator = InsightsGenerator(
-        api_key=settings.openai_api_key,
-        model="gpt-4o-mini",
-    )
+    # Get insights for each conversation (using cache when available)
+    insights_repo = InsightsRepository(session)
+    insights_generator = None  # Lazy init
 
     all_insights = []
+    cache_hits = 0
+    cache_misses = 0
+
     for conv in conversations:
+        # Check cache first
+        cached = insights_repo.get_cached(conv.id)
+        if cached:
+            all_insights.append(cached.to_response_dict())
+            cache_hits += 1
+            continue
+
+        # Cache miss - need to generate
+        cache_misses += 1
+
+        if not settings.openai_api_key:
+            # Skip this conversation if no API key
+            logger.warning(f"Skipping insights for {conv.id} - no OpenAI API key")
+            continue
+
+        if insights_generator is None:
+            insights_generator = InsightsGenerator(
+                api_key=settings.openai_api_key,
+                model="gpt-4o-mini",
+            )
+
         children = conv.children if hasattr(conv, 'children') else []
         insights = insights_generator.generate_insights(
             conversation=conv,
             session=session,
             children=children,
         )
+
+        # Save to cache
+        project_last_activity = None
+        if conv.project:
+            project_last_activity = conv.project.updated_at
+
+        insights_repo.save(
+            conversation_id=conv.id,
+            insights=insights,
+            canonical_version=insights.get("canonical_version", 1),
+            project_last_activity=project_last_activity,
+        )
+
         all_insights.append(insights)
+
+    session.commit()
+    logger.info(
+        f"Batch insights: {cache_hits} cache hits, {cache_misses} cache misses"
+    )
 
     # Aggregate insights
     aggregated = _aggregate_insights(all_insights)
