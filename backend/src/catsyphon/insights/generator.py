@@ -209,8 +209,6 @@ class InsightsGenerator:
         Returns:
             Dictionary of quantitative insights
         """
-        metadata = canonical.canonical_metadata or {}
-
         return {
             "quantitative_metrics": {
                 "message_count": canonical.message_count,
