@@ -10,6 +10,7 @@ import type {
   ConversationFilters,
   ConversationListResponse,
   DeveloperResponse,
+  HealthReportResponse,
   HealthResponse,
   IngestionJobFilters,
   IngestionJobResponse,
@@ -411,6 +412,20 @@ export async function getProjectInsights(
   });
   return apiFetch<ProjectInsightsResponse>(
     `/projects/${projectId}/insights?${params.toString()}`
+  );
+}
+
+export async function getProjectHealthReport(
+  projectId: string,
+  dateRange: '7d' | '30d' | '90d' | 'all' = '30d',
+  developer?: string
+): Promise<HealthReportResponse> {
+  const params = new URLSearchParams({ date_range: dateRange });
+  if (developer) {
+    params.append('developer', developer);
+  }
+  return apiFetch<HealthReportResponse>(
+    `/projects/${projectId}/health-report?${params.toString()}`
   );
 }
 

@@ -864,3 +864,75 @@ class InsightsResponse(BaseModel):
     # Metadata
     canonical_version: int = Field(..., description="Canonical algorithm version")
     analysis_timestamp: float = Field(..., description="Unix timestamp of analysis")
+
+
+# ===== Health Report Schemas =====
+
+
+class SessionEvidence(BaseModel):
+    """A session example used as evidence in health report."""
+
+    session_id: str
+    title: str
+    date: str  # ISO date string
+    duration_minutes: int
+    explanation: str
+    outcome: str = ""  # LLM-generated description of what happened and why
+
+
+class PatternEvidence(BaseModel):
+    """A cross-session pattern detected."""
+
+    description: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class HealthReportDiagnosis(BaseModel):
+    """Diagnosis section of health report."""
+
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    primary_issue: Optional[str] = None
+    primary_issue_detail: Optional[str] = None
+
+
+class HealthReportEvidence(BaseModel):
+    """Evidence section with real session examples."""
+
+    success_example: Optional[SessionEvidence] = None
+    failure_example: Optional[SessionEvidence] = None
+    patterns: list[PatternEvidence] = Field(default_factory=list)
+
+
+class HealthReportRecommendation(BaseModel):
+    """A recommendation backed by evidence."""
+
+    advice: str
+    evidence: str
+    filter_link: Optional[str] = None
+
+
+class HealthReportResponse(BaseModel):
+    """Response schema for project health report."""
+
+    # Hero section
+    score: float = Field(..., description="Overall health score (0-1)")
+    label: str = Field(..., description="Quality label (Excellent/Good/Developing/Needs Attention)")
+    summary: str = Field(..., description="Plain English summary")
+
+    # Diagnosis
+    diagnosis: HealthReportDiagnosis
+
+    # Evidence
+    evidence: HealthReportEvidence
+
+    # Recommendations
+    recommendations: list[HealthReportRecommendation] = Field(default_factory=list)
+
+    # Session links for drill-down
+    session_links: dict[str, str] = Field(default_factory=dict)
+
+    # Metadata
+    sessions_analyzed: int = 0
+    generated_at: float = Field(..., description="Unix timestamp of generation")
+    cached: bool = Field(default=False, description="Whether this was served from cache")
