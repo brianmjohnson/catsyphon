@@ -42,7 +42,13 @@ import { ToolUsageChart } from '@/components/ToolUsageChart';
 import { SessionTable, renderHelpers, type ColumnConfig } from '@/components/SessionTable';
 import { SessionPagination } from '@/components/SessionPagination';
 import type { ProjectSessionFilters } from '@/lib/api';
-import type { ProjectAnalytics, PatternFrequency, TrendPoint } from '@/types/api';
+import type {
+  ProjectAnalytics,
+  PatternFrequency,
+  TrendPoint,
+  PairingEffectivenessPair,
+  RoleDynamicsSummary,
+} from '@/types/api';
 
 type Tab = 'stats' | 'analytics' | 'insights' | 'sessions' | 'files';
 
@@ -148,6 +154,204 @@ export default function ProjectDetail() {
   );
 }
 
+// ===== Pairing Highlights Component =====
+
+function PairingHighlights({
+  topPairings,
+  bottomPairings,
+}: {
+  topPairings: PairingEffectivenessPair[];
+  bottomPairings: PairingEffectivenessPair[];
+}) {
+  // Helper to render metric indicator dots (5 dots scale)
+  const renderMetricDots = (value: number | null, max: number, inverted = false) => {
+    if (value === null) return <span className="text-muted-foreground text-xs">n/a</span>;
+    const normalized = inverted ? Math.max(0, 1 - value / max) : Math.min(1, value / max);
+    const filled = Math.round(normalized * 5);
+    return (
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className={`w-1.5 h-1.5 rounded-full ${
+              i <= filled
+                ? normalized >= 0.6
+                  ? 'bg-emerald-400'
+                  : normalized >= 0.3
+                    ? 'bg-amber-400'
+                    : 'bg-red-400'
+                : 'bg-slate-700'
+            }`}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  const renderPairingCard = (pair: PairingEffectivenessPair, tone: 'good' | 'bad') => (
+    <div
+      key={`${pair.developer}-${pair.agent_type}`}
+      className="border border-border/50 rounded-lg px-4 py-3 bg-slate-900/30"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <p className="font-semibold text-foreground">
+            {pair.developer || 'Unassigned'} · {pair.agent_type}
+          </p>
+          <p className="text-xs text-muted-foreground">{pair.sessions} sessions</p>
+        </div>
+        <div
+          className={`text-xl font-mono font-bold ${
+            tone === 'good' ? 'text-emerald-400' : 'text-amber-400'
+          }`}
+        >
+          {pair.score.toFixed(2)}
+        </div>
+      </div>
+      <div className="space-y-1.5 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Success rate</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono">
+              {pair.success_rate !== null ? `${Math.round(pair.success_rate * 100)}%` : 'n/a'}
+            </span>
+            {renderMetricDots(pair.success_rate, 1)}
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">LOC/hour</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono">
+              {pair.lines_per_hour !== null ? Math.round(pair.lines_per_hour) : 'n/a'}
+            </span>
+            {renderMetricDots(pair.lines_per_hour, 200)}
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Time to first change</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono">
+              {pair.first_change_minutes !== null
+                ? `${pair.first_change_minutes.toFixed(1)}m`
+                : 'n/a'}
+            </span>
+            {renderMetricDots(pair.first_change_minutes, 10, true)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Top Performers */}
+      <div className="observatory-card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <ArrowLeftRight className="w-4 h-4 text-emerald-400" />
+          <h3 className="text-sm font-mono font-semibold uppercase tracking-wider">
+            Top Performers
+          </h3>
+        </div>
+        {topPairings.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No pairing data yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {topPairings.map((pair) => renderPairingCard(pair, 'good'))}
+          </div>
+        )}
+      </div>
+
+      {/* Needs Attention */}
+      <div className="observatory-card p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <ArrowLeftRight className="w-4 h-4 text-amber-400" />
+          <h3 className="text-sm font-mono font-semibold uppercase tracking-wider">
+            Needs Attention
+          </h3>
+        </div>
+        {bottomPairings.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No pairing data yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {bottomPairings.map((pair) => renderPairingCard(pair, 'bad'))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===== Role Dynamics Donut Component =====
+
+function RoleDynamicsDonut({ dynamics }: { dynamics: RoleDynamicsSummary }) {
+  const total = dynamics.agent_led + dynamics.dev_led + dynamics.co_pilot;
+  if (total === 0) return null;
+
+  const agentPct = (dynamics.agent_led / total) * 100;
+  const devPct = (dynamics.dev_led / total) * 100;
+  const coPilotPct = (dynamics.co_pilot / total) * 100;
+
+  // CSS conic-gradient for donut chart
+  const gradient = `conic-gradient(
+    #22d3ee 0% ${agentPct}%,
+    #a855f7 ${agentPct}% ${agentPct + devPct}%,
+    #34d399 ${agentPct + devPct}% 100%
+  )`;
+
+  return (
+    <div className="observatory-card p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <Brain className="w-4 h-4 text-purple-400" />
+        <h3 className="text-sm font-mono font-semibold uppercase tracking-wider">
+          Role Dynamics
+        </h3>
+      </div>
+      <div className="flex items-center gap-8">
+        {/* Donut Chart */}
+        <div
+          className="w-24 h-24 rounded-full relative"
+          style={{ background: gradient }}
+        >
+          <div className="absolute inset-3 bg-slate-950 rounded-full flex items-center justify-center">
+            <span className="text-lg font-mono font-bold text-foreground">{total}</span>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="space-y-2 flex-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-cyan-400" />
+              <span className="text-sm">Agent-led</span>
+            </div>
+            <span className="font-mono text-sm">
+              {dynamics.agent_led} <span className="text-muted-foreground">({agentPct.toFixed(0)}%)</span>
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-purple-400" />
+              <span className="text-sm">Dev-led</span>
+            </div>
+            <span className="font-mono text-sm">
+              {dynamics.dev_led} <span className="text-muted-foreground">({devPct.toFixed(0)}%)</span>
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-400" />
+              <span className="text-sm">Co-pilot</span>
+            </div>
+            <span className="font-mono text-sm">
+              {dynamics.co_pilot} <span className="text-muted-foreground">({coPilotPct.toFixed(0)}%)</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ===== Stats Tab =====
 
 function StatsTab({ projectId }: { projectId: string }) {
@@ -158,6 +362,13 @@ function StatsTab({ projectId }: { projectId: string }) {
     queryFn: () => getProjectStats(projectId, dateRange),
     refetchInterval: 15000, // Auto-refresh every 15 seconds
     staleTime: 0, // Always fetch fresh data
+  });
+
+  // Fetch analytics data for pairing metrics
+  const { data: analytics } = useQuery({
+    queryKey: ['projects', projectId, 'analytics', dateRange],
+    queryFn: () => getProjectAnalytics(projectId, dateRange),
+    staleTime: 60000, // Analytics are less volatile
   });
 
   if (isLoading) {
@@ -354,6 +565,19 @@ function StatsTab({ projectId }: { projectId: string }) {
           </p>
         </div>
       </div>
+
+      {/* Pairing Highlights - promoted from Analytics tab */}
+      {analytics && (analytics.pairing_top.length > 0 || analytics.pairing_bottom.length > 0) && (
+        <PairingHighlights
+          topPairings={analytics.pairing_top.slice(0, 3)}
+          bottomPairings={analytics.pairing_bottom.slice(0, 3)}
+        />
+      )}
+
+      {/* Role Dynamics - promoted from Analytics tab */}
+      {analytics && (analytics.role_dynamics.agent_led > 0 || analytics.role_dynamics.dev_led > 0 || analytics.role_dynamics.co_pilot > 0) && (
+        <RoleDynamicsDonut dynamics={analytics.role_dynamics} />
+      )}
 
       {/* Sentiment Timeline */}
       {stats.sentiment_timeline && stats.sentiment_timeline.length > 0 && (
