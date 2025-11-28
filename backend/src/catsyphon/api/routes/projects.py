@@ -718,6 +718,78 @@ async def get_project_insights(
     return insights
 
 
+@router.get("/{project_id}/health-report")
+async def get_project_health_report(
+    project_id: UUID,
+    date_range: str = Query(
+        "30d",
+        description="Date range: '7d', '30d', '90d', or 'all'",
+        pattern="^(7d|30d|90d|all)$",
+    ),
+    developer: Optional[str] = Query(
+        None,
+        description="Filter by developer username",
+    ),
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Get an evidence-based health report for a project's AI collaboration.
+
+    Returns:
+    - **Hero**: Overall health score with plain English summary
+    - **Diagnosis**: Strengths and gaps based on metrics
+    - **Evidence**: Real session examples showing what works and what doesn't
+    - **Recommendations**: AI-generated advice backed by data from your sessions
+
+    Args:
+        project_id: UUID of the project
+        date_range: Time filter for conversations ('7d', '30d', '90d', 'all')
+        developer: Optional filter by developer username
+        session: Database session
+
+    Returns:
+        HealthReportResponse with score, diagnosis, evidence, and recommendations
+    """
+    from catsyphon.config import settings
+    from catsyphon.db.repositories import ProjectRepository
+    from catsyphon.insights import HealthReportGenerator
+
+    # Get workspace_id
+    workspace_id = _get_default_workspace_id(session)
+    if not workspace_id:
+        raise HTTPException(
+            status_code=404,
+            detail="No workspace found"
+        )
+
+    # Verify project exists
+    project_repo = ProjectRepository(session)
+    project = project_repo.get(project_id)
+
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {project_id} not found"
+        )
+
+    # Generate health report
+    generator = HealthReportGenerator(
+        api_key=settings.openai_api_key or "",
+        model="gpt-4o-mini",
+        max_tokens=500,
+    )
+
+    report = generator.generate(
+        project_id=project_id,
+        session=session,
+        workspace_id=workspace_id,
+        date_range=date_range,
+        developer_filter=developer,
+    )
+
+    return report
+
+
 @router.get("/{project_id}/sessions", response_model=list[ProjectSession])
 async def list_project_sessions(
     project_id: UUID,

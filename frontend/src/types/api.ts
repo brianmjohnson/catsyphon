@@ -603,3 +603,51 @@ export interface ProjectInsightsResponse {
   newest_insight_at: string | null;
   latest_conversation_at: string | null;
 }
+
+// ===== Health Report Types =====
+
+export interface SessionEvidence {
+  session_id: string;
+  title: string;
+  date: string;
+  duration_minutes: number;
+  explanation: string;
+  outcome: string; // LLM-generated description of what happened and why
+}
+
+export interface PatternEvidence {
+  description: string;
+  data: Record<string, unknown>;
+}
+
+export interface HealthReportDiagnosis {
+  strengths: string[];
+  gaps: string[];
+  primary_issue: string | null;
+  primary_issue_detail: string | null;
+}
+
+export interface HealthReportEvidence {
+  success_example: SessionEvidence | null;
+  failure_example: SessionEvidence | null;
+  patterns: PatternEvidence[];
+}
+
+export interface HealthReportRecommendation {
+  advice: string;
+  evidence: string;
+  filter_link?: string;
+}
+
+export interface HealthReportResponse {
+  score: number;
+  label: string;
+  summary: string;
+  diagnosis: HealthReportDiagnosis;
+  evidence: HealthReportEvidence;
+  recommendations: HealthReportRecommendation[];
+  session_links: Record<string, string>;
+  sessions_analyzed: number;
+  generated_at: number;
+  cached: boolean;
+}

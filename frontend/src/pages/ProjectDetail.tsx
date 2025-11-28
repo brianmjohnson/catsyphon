@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow, format } from 'date-fns';
 import {
@@ -18,6 +18,7 @@ import {
   getProjects,
   getProjectAnalytics,
   getProjectInsights,
+  getProjectHealthReport,
 } from '@/lib/api';
 import {
   BarChart3,
@@ -36,6 +37,10 @@ import {
   AlertTriangle,
   BookOpen,
   Sparkles,
+  HeartPulse,
+  CheckCircle2,
+  XCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { SentimentTimelineChart } from '@/components/SentimentTimelineChart';
 import { ToolUsageChart } from '@/components/ToolUsageChart';
@@ -48,6 +53,7 @@ import type {
   TrendPoint,
   PairingEffectivenessPair,
   RoleDynamicsSummary,
+  HealthReportResponse,
 } from '@/types/api';
 
 type Tab = 'stats' | 'analytics' | 'insights' | 'sessions' | 'files';
@@ -156,6 +162,14 @@ export default function ProjectDetail() {
 
 // ===== Pairing Highlights Component =====
 
+// Helper to get score quality label and color
+function getScoreQuality(score: number): { label: string; colorClass: string } {
+  if (score >= 0.8) return { label: 'EXCELLENT', colorClass: 'text-emerald-400' };
+  if (score >= 0.6) return { label: 'GOOD', colorClass: 'text-cyan-400' };
+  if (score >= 0.4) return { label: 'FAIR', colorClass: 'text-amber-400' };
+  return { label: 'NEEDS WORK', colorClass: 'text-red-400' };
+}
+
 function PairingHighlights({
   topPairings,
   bottomPairings,
@@ -188,59 +202,75 @@ function PairingHighlights({
     );
   };
 
-  const renderPairingCard = (pair: PairingEffectivenessPair, tone: 'good' | 'bad') => (
-    <div
-      key={`${pair.developer}-${pair.agent_type}`}
-      className="border border-border/50 rounded-lg px-4 py-3 bg-slate-900/30"
-    >
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <p className="font-semibold text-foreground">
-            {pair.developer || 'Unassigned'} · {pair.agent_type}
-          </p>
-          <p className="text-xs text-muted-foreground">{pair.sessions} sessions</p>
+  const renderPairingCard = (pair: PairingEffectivenessPair) => {
+    const quality = getScoreQuality(pair.score);
+    return (
+      <div
+        key={`${pair.developer}-${pair.agent_type}`}
+        className="border border-border/50 rounded-lg px-4 py-3 bg-slate-900/30"
+      >
+        {/* Header: Developer · Agent + Score with Quality Label */}
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <p className="font-semibold text-foreground">
+              {pair.developer || 'Unassigned'} · {pair.agent_type}
+            </p>
+            <p className="text-xs text-muted-foreground">{pair.sessions} sessions</p>
+          </div>
+          <div className="text-right">
+            <div className={`text-xl font-mono font-bold ${quality.colorClass}`}>
+              {pair.score.toFixed(2)}
+            </div>
+            <div className={`text-xs font-semibold ${quality.colorClass}`}>{quality.label}</div>
+          </div>
         </div>
-        <div
-          className={`text-xl font-mono font-bold ${
-            tone === 'good' ? 'text-emerald-400' : 'text-amber-400'
-          }`}
-        >
-          {pair.score.toFixed(2)}
+
+        {/* Formula explanation */}
+        <div className="text-xs text-muted-foreground mb-3 pt-2 border-t border-border/30">
+          Score = 60% Success + 30% Throughput + 10% Speed
+        </div>
+
+        {/* Metrics with benchmarks */}
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">
+              Success rate <span className="text-slate-600">(target: &gt;70%)</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono">
+                {pair.success_rate !== null ? `${Math.round(pair.success_rate * 100)}%` : 'n/a'}
+              </span>
+              {renderMetricDots(pair.success_rate, 1)}
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">
+              LOC/hour <span className="text-slate-600">(target: 200)</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono">
+                {pair.lines_per_hour !== null ? Math.round(pair.lines_per_hour) : 'n/a'}
+              </span>
+              {renderMetricDots(pair.lines_per_hour, 200)}
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">
+              Time to change <span className="text-slate-600">(target: &lt;10m)</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono">
+                {pair.first_change_minutes !== null
+                  ? `${pair.first_change_minutes.toFixed(1)}m`
+                  : 'n/a'}
+              </span>
+              {renderMetricDots(pair.first_change_minutes, 10, true)}
+            </div>
+          </div>
         </div>
       </div>
-      <div className="space-y-1.5 text-xs">
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Success rate</span>
-          <div className="flex items-center gap-2">
-            <span className="font-mono">
-              {pair.success_rate !== null ? `${Math.round(pair.success_rate * 100)}%` : 'n/a'}
-            </span>
-            {renderMetricDots(pair.success_rate, 1)}
-          </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">LOC/hour</span>
-          <div className="flex items-center gap-2">
-            <span className="font-mono">
-              {pair.lines_per_hour !== null ? Math.round(pair.lines_per_hour) : 'n/a'}
-            </span>
-            {renderMetricDots(pair.lines_per_hour, 200)}
-          </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Time to first change</span>
-          <div className="flex items-center gap-2">
-            <span className="font-mono">
-              {pair.first_change_minutes !== null
-                ? `${pair.first_change_minutes.toFixed(1)}m`
-                : 'n/a'}
-            </span>
-            {renderMetricDots(pair.first_change_minutes, 10, true)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -256,7 +286,7 @@ function PairingHighlights({
           <p className="text-muted-foreground text-sm">No pairing data yet.</p>
         ) : (
           <div className="space-y-3">
-            {topPairings.map((pair) => renderPairingCard(pair, 'good'))}
+            {topPairings.map((pair) => renderPairingCard(pair))}
           </div>
         )}
       </div>
@@ -273,7 +303,7 @@ function PairingHighlights({
           <p className="text-muted-foreground text-sm">No pairing data yet.</p>
         ) : (
           <div className="space-y-3">
-            {bottomPairings.map((pair) => renderPairingCard(pair, 'bad'))}
+            {bottomPairings.map((pair) => renderPairingCard(pair))}
           </div>
         )}
       </div>
@@ -352,10 +382,231 @@ function RoleDynamicsDonut({ dynamics }: { dynamics: RoleDynamicsSummary }) {
   );
 }
 
+// ===== Health Report Component =====
+
+function HealthReport({
+  projectId,
+  dateRange,
+}: {
+  projectId: string;
+  dateRange: '7d' | '30d' | '90d' | 'all';
+}) {
+  const { data: report, isLoading, error } = useQuery({
+    queryKey: ['projects', projectId, 'health-report', dateRange],
+    queryFn: () => getProjectHealthReport(projectId, dateRange),
+    staleTime: 60000, // Cache for 1 minute
+  });
+
+  if (isLoading) {
+    return (
+      <div className="observatory-card p-6 animate-pulse">
+        <div className="h-8 bg-muted rounded w-1/3 mb-4"></div>
+        <div className="h-4 bg-muted rounded w-2/3 mb-6"></div>
+        <div className="space-y-4">
+          <div className="h-20 bg-muted rounded"></div>
+          <div className="h-32 bg-muted rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !report) {
+    return (
+      <div className="observatory-card p-6 border-destructive/30">
+        <p className="text-destructive">Failed to load health report</p>
+      </div>
+    );
+  }
+
+  const scoreColorClass =
+    report.score >= 0.8
+      ? 'text-emerald-400'
+      : report.score >= 0.6
+        ? 'text-cyan-400'
+        : report.score >= 0.4
+          ? 'text-amber-400'
+          : 'text-red-400';
+
+  return (
+    <div className="space-y-6">
+      {/* Hero Section */}
+      <div className="observatory-card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <HeartPulse className={`w-6 h-6 ${scoreColorClass}`} />
+          <h3 className="text-lg font-semibold">AI Collaboration Health</h3>
+        </div>
+        <div className="flex items-baseline gap-4 mb-3">
+          <span className={`text-5xl font-mono font-bold ${scoreColorClass}`}>
+            {(report.score * 100).toFixed(0)}%
+          </span>
+          <span className={`text-xl font-semibold uppercase ${scoreColorClass}`}>
+            {report.label}
+          </span>
+        </div>
+        <p className="text-muted-foreground">{report.summary}</p>
+        <p className="text-xs text-muted-foreground mt-2">
+          Based on {report.sessions_analyzed} sessions
+        </p>
+      </div>
+
+      {/* Diagnosis Section */}
+      <div className="observatory-card p-6">
+        <h4 className="text-sm font-mono font-semibold uppercase tracking-wider mb-4">
+          What's Driving Your Score
+        </h4>
+
+        {report.diagnosis.strengths.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs text-emerald-400 font-semibold uppercase mb-2">Strengths</p>
+            <ul className="space-y-1">
+              {report.diagnosis.strengths.map((s, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {report.diagnosis.gaps.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs text-amber-400 font-semibold uppercase mb-2">Gaps</p>
+            <ul className="space-y-1">
+              {report.diagnosis.gaps.map((g, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span>{g}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {report.diagnosis.primary_issue_detail && (
+          <p className="text-sm text-muted-foreground border-t border-border/50 pt-4 mt-4">
+            {report.diagnosis.primary_issue_detail}
+          </p>
+        )}
+      </div>
+
+      {/* Evidence Section */}
+      {(report.evidence.success_example || report.evidence.failure_example) && (
+        <div className="observatory-card p-6">
+          <h4 className="text-sm font-mono font-semibold uppercase tracking-wider mb-4">
+            Evidence From Your Sessions
+          </h4>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {report.evidence.success_example && (
+              <Link
+                to={`/conversations/${report.evidence.success_example.session_id}`}
+                className="border border-emerald-400/30 rounded-lg p-4 bg-emerald-400/5 hover:bg-emerald-400/10 hover:border-emerald-400/50 transition-colors block group"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-semibold text-emerald-400 uppercase">
+                      Success Example
+                    </span>
+                  </div>
+                  <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <p className="font-medium mb-1">{report.evidence.success_example.title}</p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  {report.evidence.success_example.date} ·{' '}
+                  {report.evidence.success_example.duration_minutes > 0
+                    ? `${report.evidence.success_example.duration_minutes}m`
+                    : 'In progress'}
+                </p>
+                {report.evidence.success_example.outcome && (
+                  <p className="text-sm text-foreground/80 line-clamp-3">
+                    {report.evidence.success_example.outcome}
+                  </p>
+                )}
+                {report.evidence.success_example.explanation && (
+                  <p className="text-sm text-emerald-400/80 mt-2">
+                    {report.evidence.success_example.explanation}
+                  </p>
+                )}
+              </Link>
+            )}
+
+            {report.evidence.failure_example && (
+              <Link
+                to={`/conversations/${report.evidence.failure_example.session_id}`}
+                className="border border-red-400/30 rounded-lg p-4 bg-red-400/5 hover:bg-red-400/10 hover:border-red-400/50 transition-colors block group"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <XCircle className="w-4 h-4 text-red-400" />
+                    <span className="text-xs font-semibold text-red-400 uppercase">
+                      Failure Example
+                    </span>
+                  </div>
+                  <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <p className="font-medium mb-1">{report.evidence.failure_example.title}</p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  {report.evidence.failure_example.date} ·{' '}
+                  {report.evidence.failure_example.duration_minutes > 0
+                    ? `${report.evidence.failure_example.duration_minutes}m`
+                    : 'In progress'}
+                </p>
+                {report.evidence.failure_example.outcome && (
+                  <p className="text-sm text-foreground/80 line-clamp-3">
+                    {report.evidence.failure_example.outcome}
+                  </p>
+                )}
+                {report.evidence.failure_example.explanation && (
+                  <p className="text-sm text-red-400/80 mt-2">
+                    {report.evidence.failure_example.explanation}
+                  </p>
+                )}
+              </Link>
+            )}
+          </div>
+
+          {report.evidence.patterns.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-border/50">
+              <p className="text-xs text-muted-foreground uppercase mb-2">Patterns Detected</p>
+              {report.evidence.patterns.map((p, i) => (
+                <p key={i} className="text-sm text-cyan-400">
+                  {p.description}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recommendations Section */}
+      {report.recommendations.length > 0 && (
+        <div className="observatory-card p-6">
+          <h4 className="text-sm font-mono font-semibold uppercase tracking-wider mb-4">
+            Recommendations
+          </h4>
+          <div className="space-y-4">
+            {report.recommendations.map((rec, i) => (
+              <div key={i} className="border-l-2 border-cyan-400 pl-4">
+                <p className="font-medium">{rec.advice}</p>
+                <p className="text-sm text-muted-foreground mt-1">{rec.evidence}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Stats Tab =====
+
+type StatsSubTab = 'health' | 'details';
 
 function StatsTab({ projectId }: { projectId: string }) {
   const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('all');
+  const [subTab, setSubTab] = useState<StatsSubTab>('health');
 
   const { data: stats, isLoading, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['projects', projectId, 'stats', dateRange],
@@ -566,17 +817,51 @@ function StatsTab({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {/* Pairing Highlights - promoted from Analytics tab */}
-      {analytics && (analytics.pairing_top.length > 0 || analytics.pairing_bottom.length > 0) && (
-        <PairingHighlights
-          topPairings={analytics.pairing_top.slice(0, 3)}
-          bottomPairings={analytics.pairing_bottom.slice(0, 3)}
-        />
-      )}
+      {/* Sub-tab Toggle: Health Report vs Pairing Details */}
+      <div className="flex items-center gap-4 border-b border-border/50 pb-4">
+        <button
+          onClick={() => setSubTab('health')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+            subTab === 'health'
+              ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+          }`}
+        >
+          <HeartPulse className="w-4 h-4" />
+          Health Report
+        </button>
+        <button
+          onClick={() => setSubTab('details')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+            subTab === 'details'
+              ? 'bg-cyan-400/10 text-cyan-400 border border-cyan-400/30'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent/30'
+          }`}
+        >
+          <ArrowLeftRight className="w-4 h-4" />
+          Pairing Details
+        </button>
+      </div>
 
-      {/* Role Dynamics - promoted from Analytics tab */}
-      {analytics && (analytics.role_dynamics.agent_led > 0 || analytics.role_dynamics.dev_led > 0 || analytics.role_dynamics.co_pilot > 0) && (
-        <RoleDynamicsDonut dynamics={analytics.role_dynamics} />
+      {/* Health Report Tab Content */}
+      {subTab === 'health' && <HealthReport projectId={projectId} dateRange={dateRange} />}
+
+      {/* Pairing Details Tab Content */}
+      {subTab === 'details' && (
+        <>
+          {/* Pairing Highlights */}
+          {analytics && (analytics.pairing_top.length > 0 || analytics.pairing_bottom.length > 0) && (
+            <PairingHighlights
+              topPairings={analytics.pairing_top.slice(0, 3)}
+              bottomPairings={analytics.pairing_bottom.slice(0, 3)}
+            />
+          )}
+
+          {/* Role Dynamics */}
+          {analytics && (analytics.role_dynamics.agent_led > 0 || analytics.role_dynamics.dev_led > 0 || analytics.role_dynamics.co_pilot > 0) && (
+            <RoleDynamicsDonut dynamics={analytics.role_dynamics} />
+          )}
+        </>
       )}
 
       {/* Sentiment Timeline */}
