@@ -3,17 +3,24 @@ End-to-End test for hierarchical conversation ingestion.
 
 This test validates the entire pipeline from parsing to database storage
 using real Claude Code log files with hierarchical conversations (agents).
+
+NOTE: These tests require real conversation log samples in the test-samples/
+directory. They will be skipped if the test data is not available.
 """
 
 import time
 from pathlib import Path
 
+import pytest
 from sqlalchemy.orm import Session
 
 from catsyphon.db.repositories import ConversationRepository, WorkspaceRepository
 from catsyphon.models.db import Conversation
 from catsyphon.parsers import get_default_registry
 from catsyphon.pipeline.ingestion import ingest_conversation, link_orphaned_agents
+
+# Path to test samples (not included in public repo)
+TEST_SAMPLES_BASE = Path(__file__).parent.parent.parent / "test-samples"
 
 
 class TestE2EHierarchyIngestion:
@@ -29,7 +36,24 @@ class TestE2EHierarchyIngestion:
         3. No orphaned agents after post-ingestion linking
         4. Data integrity across the entire system
         5. Performance benchmarks for ingestion
+
+        NOTE: Requires test-samples directory with real conversation logs.
+        Skipped if test data is not available.
         """
+        # Find a test samples subdirectory
+        if not TEST_SAMPLES_BASE.exists():
+            pytest.skip("Test samples directory not found (not included in public repo)")
+
+        # Look for any subdirectory with .jsonl files
+        test_samples_dir = None
+        for subdir in TEST_SAMPLES_BASE.iterdir():
+            if subdir.is_dir() and list(subdir.glob("*.jsonl")):
+                test_samples_dir = subdir
+                break
+
+        if not test_samples_dir:
+            pytest.skip("No test sample subdirectories with .jsonl files found")
+
         # Setup
         workspace_repo = WorkspaceRepository(db_session)
         conv_repo = ConversationRepository(db_session)
@@ -46,12 +70,6 @@ class TestE2EHierarchyIngestion:
             name="Test Workspace", slug="test-workspace", organization_id=org.id
         )
         db_session.flush()
-
-        # Test data directory
-        test_samples_dir = Path("/Users/kulesh/dev/catsyphon/test-samples/-Users-kulesh-dev-topgrader")
-
-        # Verify test data exists
-        assert test_samples_dir.exists(), f"Test samples directory not found: {test_samples_dir}"
 
         # Collect all .jsonl files
         jsonl_files = list(test_samples_dir.glob("*.jsonl"))
@@ -256,7 +274,24 @@ class TestE2EHierarchyIngestion:
 
         This validates that the system correctly detects and uses incremental
         parsing when re-ingesting the same files.
+
+        NOTE: Requires test-samples directory with real conversation logs.
+        Skipped if test data is not available.
         """
+        # Check for test samples
+        if not TEST_SAMPLES_BASE.exists():
+            pytest.skip("Test samples directory not found (not included in public repo)")
+
+        # Look for any subdirectory with .jsonl files
+        test_samples_dir = None
+        for subdir in TEST_SAMPLES_BASE.iterdir():
+            if subdir.is_dir() and list(subdir.glob("*.jsonl")):
+                test_samples_dir = subdir
+                break
+
+        if not test_samples_dir:
+            pytest.skip("No test sample subdirectories with .jsonl files found")
+
         # Setup
         workspace_repo = WorkspaceRepository(db_session)
         conv_repo = ConversationRepository(db_session)
@@ -273,9 +308,6 @@ class TestE2EHierarchyIngestion:
         )
         db_session.flush()
 
-        # Test with a single large file
-        test_samples_dir = Path("/Users/kulesh/dev/catsyphon/test-samples/-Users-kulesh-dev-topgrader")
-
         # Find a main conversation file (not agent)
         jsonl_files = [
             f for f in test_samples_dir.glob("*.jsonl")
@@ -283,8 +315,7 @@ class TestE2EHierarchyIngestion:
         ]
 
         if not jsonl_files:
-            print("⚠️  No main conversation files found, skipping incremental test")
-            return
+            pytest.skip("No main conversation files found in test samples")
 
         test_file = jsonl_files[0]
         print(f"\n🔄 Testing incremental parsing with: {test_file.name}")

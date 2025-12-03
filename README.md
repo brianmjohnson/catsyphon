@@ -350,7 +350,7 @@ Get CatSyphon running in **5 minutes**!
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_ORG/catsyphon.git
+git clone https://github.com/kulesh/catsyphon.git
 cd catsyphon
 
 # Install dependencies (Python 3.11+, Node 20, pnpm)
@@ -897,7 +897,7 @@ Yes:
 - [ ] **v0.6** - Alert system for pattern detection
 - [ ] **v1.0** - Production deployment guides + authentication
 
-See [GitHub Issues](https://github.com/YOUR_ORG/catsyphon/issues) for detailed roadmap.
+See [GitHub Issues](https://github.com/kulesh/catsyphon/issues) for detailed roadmap.
 
 ## License
 
