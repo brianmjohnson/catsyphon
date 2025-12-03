@@ -109,10 +109,18 @@ export interface ConversationListItem {
   developer?: DeveloperResponse;
 }
 
+export interface RawLogInfo {
+  id: string;
+  file_path: string | null;
+  file_hash: string;
+  created_at: string;
+}
+
 export interface ConversationDetail extends ConversationListItem {
   messages: MessageResponse[];
   epochs: EpochResponse[];
   files_touched: FileTouchedResponse[];
+  raw_logs: RawLogInfo[];
 
   // Hierarchical relationships (Phase 2: Epic 7u2)
   children: ConversationListItem[];

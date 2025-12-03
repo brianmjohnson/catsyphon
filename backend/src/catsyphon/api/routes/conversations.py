@@ -17,6 +17,7 @@ from catsyphon.api.schemas import (
     ConversationListItem,
     ConversationListResponse,
     MessageResponse,
+    RawLogInfo,
 )
 from catsyphon.config import settings
 from catsyphon.db.connection import get_db
@@ -124,6 +125,15 @@ def _conversation_to_detail(conv: Conversation) -> ConversationDetail:
         messages=[MessageResponse.model_validate(m) for m in (conv.messages or [])],
         epochs=conv.epochs or [],
         files_touched=conv.files_touched or [],
+        raw_logs=[
+            RawLogInfo(
+                id=rl.id,
+                file_path=rl.file_path,
+                file_hash=rl.file_hash,
+                created_at=rl.created_at,
+            )
+            for rl in (conv.raw_logs or [])
+        ],
         children=children,
         parent=parent,
     )

@@ -306,12 +306,25 @@ class ConversationListItem(BaseModel):
         from_attributes = True
 
 
+class RawLogInfo(BaseModel):
+    """Minimal raw log information for display."""
+
+    id: UUID
+    file_path: Optional[str] = None
+    file_hash: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ConversationDetail(ConversationListItem):
     """Schema for detailed conversation view (with messages)."""
 
     messages: list[MessageResponse] = Field(default_factory=list)
     epochs: list[EpochResponse] = Field(default_factory=list)
     files_touched: list[FileTouchedResponse] = Field(default_factory=list)
+    raw_logs: list[RawLogInfo] = Field(default_factory=list)
 
     # Hierarchical relationships (Phase 2: Epic 7u2)
     children: list["ConversationListItem"] = Field(default_factory=list)

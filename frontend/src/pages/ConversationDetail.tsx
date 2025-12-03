@@ -314,6 +314,15 @@ export default function ConversationDetail() {
                 : 'N/A'}
             </p>
           </div>
+
+          <div className="col-span-3">
+            <p className="text-sm text-muted-foreground mb-1">Source File(s)</p>
+            <p className="font-medium text-xs font-mono break-all">
+              {conversation.raw_logs && conversation.raw_logs.length > 0
+                ? conversation.raw_logs.map(rl => rl.file_path || 'Unknown').join(', ')
+                : 'Unknown'}
+            </p>
+          </div>
         </div>
 
         {/* Stats Row */}
