@@ -45,6 +45,9 @@ class TestRealSamplesStatistics:
 
     def test_parse_all_samples_summary(self):
         """Parse all samples and report summary statistics."""
+        if not SAMPLE_FILES:
+            pytest.skip("No sample files found (test-samples directory removed)")
+
         parser = ClaudeCodeParser()
 
         total = len(SAMPLE_FILES)

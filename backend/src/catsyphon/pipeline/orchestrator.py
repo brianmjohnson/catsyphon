@@ -232,6 +232,33 @@ def ingest_log_file(
         parse_metrics["parse_warnings"] = parse_result.warnings
         parse_metrics["parse_warning_count"] = len(parse_result.warnings)
 
+    # Skip metadata-only files (e.g., file-history-snapshot logs with no conversation messages)
+    parsed_conv = parse_result.conversation
+    if (
+        parsed_conv.conversation_type == "metadata"
+        and len(parsed_conv.messages) == 0
+    ):
+        reason = (
+            f"Metadata-only file with no conversation messages "
+            f"(type={parsed_conv.conversation_type}, messages=0)"
+        )
+        tracker.mark_skipped(
+            conversation_id=None,
+            raw_log_id=None,
+            metrics=metrics,
+            metadata_fields={**metrics_metadata, **parse_metrics},
+            reason=reason,
+        )
+        return IngestOutcome(
+            conversation=None,
+            conversation_id=None,
+            status="skipped",
+            job_id=tracker.job.id,
+            incremental=False,
+            parser_name=parse_metrics.get("parser_name"),
+            parse_change_type=parse_metrics.get("parse_change_type"),
+        )
+
     conversation = ingestion_module.ingest_conversation(
         session=session,
         parsed=parse_result.conversation,
