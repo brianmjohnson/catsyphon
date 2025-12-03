@@ -89,6 +89,7 @@ def _resolve_project_and_developer(
     working_directory: Optional[str],
     project_name: Optional[str] = None,
     developer_username: Optional[str] = None,
+    file_path: Optional[Path] = None,
 ) -> tuple[Optional[UUID], Optional[UUID]]:
     """Resolve project and developer IDs from parsed data.
 
@@ -102,6 +103,7 @@ def _resolve_project_and_developer(
         working_directory: Optional working directory path from parsed conversation
         project_name: Optional explicit project name (overrides auto-detection)
         developer_username: Optional explicit developer username (overrides auto-detection)
+        file_path: Optional path to the log file (used as fallback for project detection)
 
     Returns:
         Tuple of (project_id, developer_id), either or both may be None
@@ -135,6 +137,37 @@ def _resolve_project_and_developer(
         logger.debug(
             f"Auto-detected project: {project.name} from {working_directory}"
         )
+    elif file_path:
+        # Fallback: Try to extract project from file path
+        # Claude Code logs are typically in ~/.claude/projects/-path-to-project/
+        # e.g., ~/.claude/projects/-Users-kulesh-dev-catsyphon/session.jsonl
+        try:
+            path_str = str(file_path)
+            # Look for pattern: /projects/-Path-To-Project/
+            if "/projects/" in path_str or "\\projects\\" in path_str:
+                # Split by /projects/ or \projects\
+                parts = path_str.replace("\\", "/").split("/projects/")
+                if len(parts) > 1:
+                    # Get the directory name after /projects/
+                    project_dir = parts[1].split("/")[0]
+                    if project_dir:
+                        # Convert -Users-kulesh-dev-myproject to myproject
+                        # by taking the last segment after splitting by -
+                        segments = project_dir.split("-")
+                        if len(segments) > 1:
+                            # Last segment is the project name
+                            detected_name = segments[-1]
+                        else:
+                            detected_name = project_dir
+                        project = project_repo.get_or_create_by_name(
+                            detected_name, workspace_id
+                        )
+                        project_id = project.id
+                        logger.debug(
+                            f"Extracted project '{detected_name}' from file path: {file_path}"
+                        )
+        except Exception as e:
+            logger.debug(f"Could not extract project from file path: {e}")
     else:
         logger.warning(
             "No project association: working_directory not found and project_name not provided"
@@ -801,6 +834,7 @@ def ingest_conversation(
             working_directory=parsed.working_directory,
             project_name=project_name,
             developer_username=developer_username,
+            file_path=file_path,
         )
 
         # Step 3: Hierarchical conversation linking (Phase 2: Epic 7u2)
@@ -826,6 +860,18 @@ def ingest_conversation(
                     f"Linking agent conversation (session_id={parsed.session_id}) "
                     f"to parent (session_id={parsed.parent_session_id}, id={parent_conversation_id})"
                 )
+
+                # Inherit project and developer from parent if not already set
+                if project_id is None and parent_conversation.project_id:
+                    project_id = parent_conversation.project_id
+                    logger.debug(
+                        f"Inherited project_id={project_id} from parent conversation"
+                    )
+                if developer_id is None and parent_conversation.developer_id:
+                    developer_id = parent_conversation.developer_id
+                    logger.debug(
+                        f"Inherited developer_id={developer_id} from parent conversation"
+                    )
 
                 # Find the exact parent message that spawned this agent
                 # by looking for Task tool calls that occurred before agent start
