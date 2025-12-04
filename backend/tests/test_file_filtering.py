@@ -303,3 +303,92 @@ def conversational_file(tmp_path: Path) -> Path:
             + "\n"
         )
     return file_path
+
+
+@pytest.fixture
+def file_history_snapshot_file(tmp_path: Path) -> Path:
+    """Create a file containing only file-history-snapshot entries (no conversation)."""
+    # Use a UUID-like filename since parser extracts session_id from filename for metadata files
+    file_path = tmp_path / "985778d1-2b63-4610-a53e-d7529511a16d.jsonl"
+    with file_path.open("w") as f:
+        f.write(
+            json.dumps(
+                {
+                    "type": "file-history-snapshot",
+                    "messageId": "4bdf5d1c-e6db-4076-b631-1fe4af531d75",
+                    "snapshot": {"messageId": "4bdf5d1c-e6db-4076-b631-1fe4af531d75"},
+                    "trackedFileBackups": {
+                        "/some/file.md": {
+                            "backupFileName": None,
+                            "version": 1,
+                            "backupTime": "2025-12-03T18:43.891Z",
+                        }
+                    },
+                    "timestamp": "2025-12-03T18:23:56.359Z",
+                    "isSnapshotUpdate": False,
+                }
+            )
+            + "\n"
+        )
+    return file_path
+
+
+class TestOrchestratorMetadataSkipping:
+    """Test that orchestrator skips metadata-only files."""
+
+    def test_file_history_snapshot_skipped(
+        self, db_session, file_history_snapshot_file: Path
+    ):
+        """Test that file-history-snapshot-only files are skipped, not ingested."""
+        from catsyphon.parsers import get_default_registry
+        from catsyphon.pipeline.orchestrator import ingest_log_file
+
+        registry = get_default_registry()
+
+        outcome = ingest_log_file(
+            session=db_session,
+            file_path=file_history_snapshot_file,
+            registry=registry,
+            project_name=None,
+            developer_username=None,
+            tags=None,
+            skip_duplicates=True,
+            update_mode="skip",
+            source_type="upload",
+        )
+
+        # Should be skipped, not ingested
+        assert outcome.status == "skipped"
+        assert outcome.conversation is None
+        assert outcome.conversation_id is None
+
+    def test_file_history_snapshot_tracked_in_jobs(
+        self, db_session, file_history_snapshot_file: Path
+    ):
+        """Test that skipped metadata files are tracked in ingestion_jobs."""
+        from catsyphon.db.repositories import IngestionJobRepository
+        from catsyphon.parsers import get_default_registry
+        from catsyphon.pipeline.orchestrator import ingest_log_file
+
+        registry = get_default_registry()
+
+        outcome = ingest_log_file(
+            session=db_session,
+            file_path=file_history_snapshot_file,
+            registry=registry,
+            project_name=None,
+            developer_username=None,
+            tags=None,
+            skip_duplicates=True,
+            update_mode="skip",
+            source_type="upload",
+        )
+        db_session.commit()
+
+        # Verify job was tracked
+        repo = IngestionJobRepository(db_session)
+        job = repo.get(outcome.job_id)
+
+        assert job is not None
+        assert job.status == "skipped"
+        assert "Metadata-only file" in (job.error_message or "")
